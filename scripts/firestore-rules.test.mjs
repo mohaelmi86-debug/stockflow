@@ -110,6 +110,39 @@ async function seed() {
       await setDoc(doc(db, 'organizations', data.orgId, 'members', data.uid), data);
     }
     await setDoc(doc(db, 'organizations', 'org_alpha', 'stockBalances', 'product_1_warehouse_1_location_1'), balance());
+    await setDoc(doc(db, 'organizations', 'org_alpha', 'stockMovements', 'movement_in_001'), movement('operator_alpha', 'movement_in_001'));
+    await setDoc(doc(db, 'organizations', 'org_alpha', 'salesOrders', 'order_1'), {
+      id: 'order_1',
+      orgId: 'org_alpha',
+      reference: 'CC-TEST-0001',
+      customerId: 'customer_1',
+      customerName: 'Client de test',
+      warehouseId: 'warehouse_1',
+      warehouseName: 'Entrepôt principal',
+      status: 'confirmed',
+      stockReserved: false,
+      shippingCost: 0,
+      subtotalHt: 3,
+      vatTotal: 0.6,
+      totalTtc: 3.6,
+      lines: [{
+        productId: 'product_1',
+        productSku: 'SKU-1',
+        productName: 'Produit test',
+        unit: 'unité',
+        quantity: 3,
+        reservedQty: 0,
+        deliveredQty: 0,
+        unitPrice: 1,
+        discountPct: 0,
+        vatRate: 20,
+      }],
+      createdByUid: 'owner_alpha',
+      createdByName: 'owner_alpha',
+      memberUids: ['owner_alpha', 'operator_alpha'],
+      createdAt: now,
+      updatedAt: now,
+    });
     await setDoc(doc(db, 'users', 'viewer_alpha'), {
       uid: 'viewer_alpha',
       email: 'viewer_alpha@example.test',
@@ -229,31 +262,62 @@ try {
     }));
   });
 
-  await check('operators cannot change physical stock without a movement', async () => {
-    await assertFails(updateDoc(doc(dbFor('operator_alpha'), 'organizations', 'org_alpha', 'stockBalances', 'product_1_warehouse_1_location_1'), {
-      physicalQty: 11,
-      availableQty: 11,
+  await check('clients cannot edit sales order reservation allocations', async () => {
+    const orderRef = doc(dbFor('operator_alpha'), 'organizations', 'org_alpha', 'salesOrders', 'order_1');
+    await assertFails(updateDoc(orderRef, {
+      stockReserved: true,
+      lines: [{
+        productId: 'product_1',
+        productSku: 'SKU-1',
+        productName: 'Produit test',
+        unit: 'unité',
+        quantity: 3,
+        reservedQty: 3,
+        deliveredQty: 0,
+        reservationAllocations: [{ warehouseId: 'warehouse_1', locationId: 'location_1', quantity: 3 }],
+        unitPrice: 1,
+        discountPct: 0,
+        vatRate: 20,
+      }],
       updatedAt: serverTimestamp(),
     }));
   });
 
-  await check('orphan stock movements without a matching balance update are denied', async () => {
+  await check('clients cannot create goods receipts directly', async () => {
+    await assertFails(setDoc(doc(dbFor('operator_alpha'), 'organizations', 'org_alpha', 'goodsReceipts', 'receipt_forged'), {
+      id: 'receipt_forged',
+    }));
+  });
+
+  await check('clients cannot create delivery notes directly', async () => {
+    await assertFails(setDoc(doc(dbFor('operator_alpha'), 'organizations', 'org_alpha', 'deliveryNotes', 'delivery_forged'), {
+      id: 'delivery_forged',
+    }));
+  });
+
+  await check('clients cannot modify physical or reserved stock directly', async () => {
+    await assertFails(updateDoc(doc(dbFor('operator_alpha'), 'organizations', 'org_alpha', 'stockBalances', 'product_1_warehouse_1_location_1'), {
+      reservedQty: 2,
+      availableQty: 8,
+      updatedAt: serverTimestamp(),
+    }));
+  });
+
+  await check('clients cannot create stock movements directly', async () => {
     await assertFails(setDoc(doc(dbFor('operator_alpha'), 'organizations', 'org_alpha', 'stockMovements', 'movement_orphan_1'), movement('operator_alpha')));
   });
 
-  await check('stock balance and immutable movement must be committed together', async () => {
+  await check('clients cannot mutate stock even with a paired movement', async () => {
     const db = dbFor('operator_alpha');
-    const balanceRef = doc(db, 'organizations', 'org_alpha', 'stockBalances', 'product_1_warehouse_1_location_1');
-    const movementRef = doc(db, 'organizations', 'org_alpha', 'stockMovements', 'movement_in_001');
-    await assertSucceeds(runTransaction(db, async (transaction) => {
-      transaction.set(movementRef, movement('operator_alpha', 'movement_in_001'));
-      transaction.update(balanceRef, {
-        physicalQty: 12,
-        availableQty: 12,
-        lastMovementId: 'movement_in_001',
-        updatedAt: serverTimestamp(),
-      });
-    }));
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'organizations', 'org_alpha', 'stockMovements', 'movement_in_002'), movement('operator_alpha', 'movement_in_002'));
+    batch.update(doc(db, 'organizations', 'org_alpha', 'stockBalances', 'product_1_warehouse_1_location_1'), {
+      physicalQty: 12,
+      availableQty: 12,
+      lastMovementId: 'movement_in_002',
+      updatedAt: serverTimestamp(),
+    });
+    await assertFails(batch.commit());
   });
 
   await check('stock movement ledger entries are immutable', async () => {

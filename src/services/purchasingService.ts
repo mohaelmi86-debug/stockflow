@@ -12,6 +12,7 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { db } from '../lib/firebase.ts';
+import { callStockEngine } from '../lib/stockApi.ts';
 import { handleFirestoreError, OperationType } from '../lib/firestoreError.ts';
 import { generateSafeId, toDate } from '../shared/formatters.ts';
 import type {
@@ -488,222 +489,20 @@ export async function validateGoodsReceipt(params: {
   notes?: string;
   actor: { uid: string; email: string; displayName: string };
 }): Promise<string> {
-  const {
-    orgId,
-    memberUids,
-    order,
-    warehouse,
-    locations,
-    linesInput,
-    inspectionStatus,
-    deliveryNoteRef,
-    notes,
-    actor,
-  } = params;
-
-  const activeLines = linesInput.filter((l) => l.receivedQty > 0);
-  if (activeLines.length === 0) {
-    throw new Error('Veuillez saisir au moins une quantité reçue supérieure à 0.');
-  }
-
-  const locMap = new Map(locations.map((l) => [l.id, l]));
-  const receiptId = generateSafeId('gr');
-  const nowStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  const receiptRef = `BR-${nowStr}-${receiptId.slice(-4).toUpperCase()}`;
-  const path = `organizations/${orgId}/goodsReceipts/${receiptId}`;
-
-  try {
-    await runTransaction(db, async (tx) => {
-      // 1. ALL READS FIRST
-      const poRef = doc(db, 'organizations', orgId, 'purchaseOrders', order.id);
-      const poSnap = await tx.get(poRef);
-      if (!poSnap.exists()) {
-        throw new Error('Commande fournisseur introuvable.');
-      }
-      const freshOrder = poSnap.data() as PurchaseOrder;
-      if (freshOrder.status === 'canceled' || freshOrder.status === 'closed') {
-        throw new Error('Impossible de réceptionner une commande annulée ou clôturée.');
-      }
-
-      const balanceReads = await Promise.all(
-        activeLines.map(async (line) => {
-          const balId = `${line.productId}_${warehouse.id}_${line.locationId}`;
-          const balRef = doc(db, 'organizations', orgId, 'stockBalances', balId);
-          const snap = await tx.get(balRef);
-          return { line, balId, balRef, snap };
-        })
-      );
-
-      // 2. VALIDATIONS & COMPUTATIONS
-      const receiptLines: GoodsReceiptLine[] = [];
-      const updatedOrderLines = freshOrder.lines.map((ol) => ({ ...ol }));
-
-      for (const { line } of balanceReads) {
-        const orderLine = updatedOrderLines.find((ol) => ol.productId === line.productId);
-        if (!orderLine) {
-          throw new Error(`Produit ${line.productId} absent de la commande.`);
-        }
-        const remaining = Math.max(0, orderLine.quantity - orderLine.receivedQty);
-        if (line.receivedQty > remaining + 0.0001) {
-          throw new Error(
-            `Quantité reçue (${line.receivedQty}) supérieure au reliquat (${remaining}) pour ${orderLine.productSku}.`
-          );
-        }
-        if (line.acceptedQty + line.rejectedQty > line.receivedQty + 0.0001) {
-          throw new Error(`Somme acceptée + rejetée invalide pour ${orderLine.productSku}.`);
-        }
-
-        const loc = locMap.get(line.locationId);
-        if (!loc) {
-          throw new Error('Emplacement de réception invalide.');
-        }
-
-        // Only acceptedQty increases physical stock & counts toward fulfilled order qty
-        orderLine.receivedQty = Number((orderLine.receivedQty + line.acceptedQty).toFixed(3));
-        const unitCost = Number((orderLine.unitPrice * (1 - orderLine.discountPct / 100)).toFixed(4));
-
-        receiptLines.push({
-          productId: orderLine.productId,
-          productSku: orderLine.productSku,
-          productName: orderLine.productName,
-          locationId: loc.id,
-          locationCode: loc.code,
-          receivedQty: line.receivedQty,
-          acceptedQty: line.acceptedQty,
-          rejectedQty: line.rejectedQty,
-          unitCost,
-        });
-      }
-
-      const allFulfilled = updatedOrderLines.every((ol) => ol.receivedQty >= ol.quantity);
-      const anyReceived = updatedOrderLines.some((ol) => ol.receivedQty > 0);
-      const nextStatus: PurchaseOrder['status'] = allFulfilled
-        ? 'received'
-        : anyReceived
-          ? 'partially_received'
-          : freshOrder.status;
-
-      // 3. ALL WRITES
-      tx.set(doc(db, 'organizations', orgId, 'goodsReceipts', receiptId), {
-        id: receiptId,
-        orgId,
-        reference: receiptRef,
-        purchaseOrderId: freshOrder.id,
-        purchaseOrderRef: freshOrder.reference,
-        supplierId: freshOrder.supplierId,
-        supplierName: freshOrder.supplierName,
-        warehouseId: warehouse.id,
-        warehouseName: warehouse.name,
-        inspectionStatus,
-        deliveryNoteRef: deliveryNoteRef || '',
-        notes: notes || '',
-        lines: receiptLines,
-        receivedByUid: actor.uid,
-        receivedByName: actor.displayName,
-        memberUids,
-        createdAt: serverTimestamp(),
-      });
-
-      tx.update(poRef, {
-        lines: updatedOrderLines,
-        status: nextStatus,
-        updatedAt: serverTimestamp(),
-      });
-
-      for (let i = 0; i < balanceReads.length; i++) {
-        const { line, balId, balRef, snap } = balanceReads[i];
-        const rLine = receiptLines[i];
-        if (rLine.acceptedQty <= 0) continue;
-
-        const existingBal = snap.exists() ? (snap.data() as StockBalance) : null;
-        const newPhysical = (existingBal?.physicalQty ?? 0) + rLine.acceptedQty;
-        const reserved = existingBal?.reservedQty ?? 0;
-        const newOnOrder = Math.max(0, (existingBal?.onOrderQty ?? 0) - rLine.acceptedQty);
-        const mvtId = generateSafeId('mvt');
-
-        if (snap.exists()) {
-          tx.update(balRef, {
-            physicalQty: newPhysical,
-            availableQty: Math.max(0, newPhysical - reserved),
-            onOrderQty: newOnOrder,
-            unitCost: rLine.unitCost,
-            lastMovementId: mvtId,
-            updatedAt: serverTimestamp(),
-          });
-        } else {
-          tx.set(balRef, {
-            id: balId,
-            orgId,
-            productId: rLine.productId,
-            productSku: rLine.productSku,
-            productName: rLine.productName,
-            warehouseId: warehouse.id,
-            warehouseName: warehouse.name,
-            locationId: rLine.locationId,
-            locationCode: rLine.locationCode,
-            physicalQty: newPhysical,
-            reservedQty: 0,
-            onOrderQty: 0,
-            inTransitQty: 0,
-            availableQty: newPhysical,
-            unitCost: rLine.unitCost,
-            lastMovementId: mvtId,
-            memberUids,
-            updatedAt: serverTimestamp(),
-          });
-        }
-
-        tx.set(doc(db, 'organizations', orgId, 'stockMovements', mvtId), {
-          id: mvtId,
-          orgId,
-          reference: `MVT-${nowStr}-${mvtId.slice(-5).toUpperCase()}`,
-          movementType: 'IN',
-          productId: rLine.productId,
-          productSku: rLine.productSku,
-          productName: rLine.productName,
-          warehouseId: warehouse.id,
-          warehouseName: warehouse.name,
-          locationId: rLine.locationId,
-          locationCode: rLine.locationCode,
-          quantity: rLine.acceptedQty,
-          unitCost: rLine.unitCost,
-          reason: `Réception commande ${freshOrder.reference} (${freshOrder.supplierName})`,
-          sourceDocumentType: 'Réception fournisseur',
-          sourceDocumentRef: receiptRef,
-          performedByUid: actor.uid,
-          performedByName: actor.displayName,
-          isDemo: false,
-          memberUids,
-          createdAt: serverTimestamp(),
-        });
-      }
-
-      const logId = generateSafeId('log');
-      tx.set(doc(db, 'organizations', orgId, 'auditLogs', logId), {
-        id: logId,
-        orgId,
-        actorUid: actor.uid,
-        actorEmail: actor.email,
-        action: 'GOODS_RECEIPT_VALIDATED',
-        entityType: 'goods_receipt',
-        entityId: receiptId,
-        summary: `Réception ${receiptRef} sur commande ${freshOrder.reference} (${inspectionStatus})`,
-        memberUids,
-        createdAt: serverTimestamp(),
-      });
-    });
-
-    return receiptRef;
-  } catch (error) {
-    if (error instanceof Error && (error.message.includes('Quantité') || error.message.includes('Commande') || error.message.includes('Emplacement'))) {
-      throw error;
-    }
-    handleFirestoreError(error, OperationType.WRITE, path);
-  }
+  const result = await callStockEngine<{ reference: string }>('receipt', {
+    orgId: params.orgId,
+    orderId: params.order.id,
+    warehouseId: params.warehouse.id,
+    linesInput: params.linesInput,
+    inspectionStatus: params.inspectionStatus,
+    deliveryNoteRef: params.deliveryNoteRef ?? '',
+    notes: params.notes ?? '',
+  });
+  return result.reference;
 }
 
-// ---------------------------------------------------------------------------
 // Supplier Invoices & Payments
+
 // ---------------------------------------------------------------------------
 export async function createSupplierInvoice(params: {
   orgId: string;

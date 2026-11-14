@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requireAuth, type AuthRequest } from './authMiddleware.ts';
 import { aiRouter } from './aiRouter.ts';
 import { billingRouter } from './billingRouter.ts';
+import { stockOperationsRouter } from './stockOperationsRouter.ts';
 import { productSchema, stockMovementSchema } from '../shared/schemas.ts';
 import { PLAN_QUOTAS } from '../shared/types.ts';
 
@@ -9,6 +10,7 @@ export const apiRouter = Router();
 
 apiRouter.use('/ai', aiRouter);
 apiRouter.use('/billing', billingRouter);
+apiRouter.use('/stock', stockOperationsRouter);
 
 apiRouter.get('/health', (_req, res) => {
   res.json({
@@ -44,6 +46,11 @@ apiRouter.get('/docs', (_req, res) => {
       { method: 'GET', path: '/api/auth/verify', auth: true, description: 'Vérification du jeton Firebase Auth côté serveur' },
       { method: 'POST', path: '/api/validate/product', auth: true, description: 'Validation Zod et calcul marge/TVA d’un produit' },
       { method: 'POST', path: '/api/validate/movement', auth: true, description: 'Validation Zod d’un mouvement de stock traçable' },
+      { method: 'POST', path: '/api/stock/movement', auth: true, description: 'Entrée, sortie, transfert ou ajustement sécurisé côté serveur' },
+      { method: 'POST', path: '/api/stock/receipt', auth: true, description: 'Réception fournisseur et entrée en stock transactionnelles' },
+      { method: 'POST', path: '/api/stock/reserve', auth: true, description: 'Réservation de stock atomique par emplacement' },
+      { method: 'POST', path: '/api/stock/cancel', auth: true, description: 'Annulation et libération des allocations exactes' },
+      { method: 'POST', path: '/api/stock/ship', auth: true, description: 'Expédition et sortie de stock transactionnelles' },
       { method: 'POST', path: '/api/ai/chat', auth: true, description: 'Assistant IA Gemini contextuel avec tool calling et validation humaine' },
     ],
   });

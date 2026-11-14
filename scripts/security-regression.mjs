@@ -9,6 +9,8 @@ const erp = read('src/services/erpService.ts');
 const purchasing = read('src/services/purchasingService.ts');
 const sales = read('src/services/salesService.ts');
 const types = read('src/shared/types.ts');
+const stockEngine = read('src/server/stockOperationsRouter.ts');
+const stockCore = read('src/server/stockEngineCore.ts');
 
 assert.ok(!rules.includes('request.auth.uid in resource.data.memberUids'),
   'Firestore list rules must not rely on stale memberUids arrays.');
@@ -24,14 +26,23 @@ assert.ok(!updateRule.includes("'plan'") && !updateRule.includes('stripeCustomer
   'Clients must not be able to update subscription or Stripe fields.');
 assert.ok(orgRules.includes("incoming().plan == 'starter'"),
   'New organizations must be created on the free Starter plan.');
-assert.ok(rules.includes('function isMovementLinkedToBalances') && rules.includes('isMovementLinkedToBalances(orgId, incoming())'),
-  'Stock movements must be linked back to the affected balance in the same transaction.');
+assert.ok((rules.match(/allow create, update, delete: if false;/g) ?? []).length >= 2,
+  'Stock balances and stock movements must be immutable to browser clients; trusted server routes own mutations.');
+assert.ok(rules.includes('incoming().lines == existing().lines') && rules.includes('incoming().stockReserved == existing().stockReserved'),
+  'Browser clients must not mutate sales-order reservation or delivery lines.');
+assert.ok(stockEngine.includes("router.use(requireAuth)") && stockEngine.includes("member.status !== 'active'") && stockEngine.includes("['owner', 'admin', 'manager', 'operator']"),
+  'Stock engine endpoints must require Firebase authentication and an active operator membership.');
 assert.ok(rules.includes("getAfter(/databases/$(database)/documents/organizations/$(orgId)).data.plan == incoming().plan"),
   'User membership mirrors must match the authoritative organization plan.');
-assert.ok(rules.includes('function isLinkedStockBalanceMovement') && rules.includes('getAfter(movementPath)'),
-  'Stock balances must be linked to a movement in the same Firestore transaction.');
-assert.ok(rules.includes('incoming().lastMovementId') && rules.includes("'lastMovementId'"),
-  'Stock balance rules must validate the linked movement id.');
+assert.ok(stockEngine.includes('lastMovementId: movementId') && stockEngine.includes('movementType'),
+  'Trusted stock engine writes must link updated balances to their immutable movement ledger entries.');
+assert.ok(stockEngine.includes("router.post('/movement'") && stockEngine.includes("router.post('/receipt'") &&
+  stockEngine.includes("router.post('/reserve'") && stockEngine.includes("router.post('/cancel'") &&
+  stockEngine.includes("router.post('/ship'"),
+  'The trusted stock engine must expose movement, receipt, reserve, cancel and ship operations.');
+assert.ok(stockCore.includes('assertReservationConsistency') && stockCore.includes('validateReceiptQuantities') &&
+  stockCore.includes('computeAvailableQuantity'),
+  'The stock engine must centralize reservation, receipt and availability invariants.');
 assert.ok(rules.includes('match /invoiceCounters/{counterId}') && rules.includes('existing().sequenceNumber + 1'),
   'Invoice counters must be incremented transactionally and monotonically.');
 
@@ -48,18 +59,19 @@ assert.ok(!settings.includes('sandboxTargetPlan') && !settings.includes('updateO
 
 assert.ok(types.includes('interface StockReservationAllocation'),
   'Sales order lines must support location-specific reservations.');
-assert.ok(sales.includes('reservationAllocations') && sales.includes('runTransaction'),
-  'Reservation and shipping workflows must use per-location transaction logic.');
+assert.ok(sales.includes("callStockEngine('reserve'") && sales.includes("callStockEngine('cancel'") &&
+  sales.includes("callStockEngine('ship'"),
+  'Sales reservation, cancellation and shipping must call the trusted stock engine.');
 assert.ok(sales.includes('invoiceCounters') && sales.includes('runTransaction'),
   'Invoice sequence allocation must be transactional.');
 assert.ok(sales.includes('latestInvoiceQuery') && sales.includes('orderBy(\'invoiceNumber\', \'desc\')'),
   'First invoice counter must seed itself from existing invoice history.');
+assert.ok(sales.includes('linkedOrderSnap') && sales.includes('allUnitsDelivered') && sales.includes("status === 'delivered'"),
+  'A sales order can only become invoiced after every unit has been delivered and all reservations are released.');
 assert.ok(sales.includes('Facture cible introuvable') && sales.includes('paidAmount'),
   'Payment workflow must read and validate the current invoice in a transaction.');
-assert.ok(erp.includes('lastMovementId: movementId') && purchasing.includes('lastMovementId: mvtId'),
-  'All principal stock inbound/outbound movement services must link their stock balance writes to immutable movements.');
-assert.ok(sales.includes('lastMovementId: write.movementId'),
-  'Sales shipment stock balance writes must reference their immutable movement.');
+assert.ok(erp.includes("callStockEngine('movement'") && purchasing.includes("callStockEngine('receipt'"),
+  'Manual movements and purchase receipts must call the trusted stock engine.');
 
 console.log('StockFlow security regression checks: PASS');
 
