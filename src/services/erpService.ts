@@ -459,6 +459,7 @@ function seedDemoCatalogIntoBatch(
     });
 
     const balId = `${p.id}_${p.whId}_${p.locId}`;
+    const initialMovementId = p.qty > 0 ? `mvt_init_${p.id}` : undefined;
     batch.set(doc(db, 'organizations', orgId, 'stockBalances', balId), {
       id: balId,
       orgId,
@@ -475,12 +476,13 @@ function seedDemoCatalogIntoBatch(
       inTransitQty: 0,
       availableQty: p.qty > 10 ? p.qty - 4 : p.qty,
       unitCost: p.purchasePrice,
+      ...(initialMovementId ? { lastMovementId: initialMovementId } : {}),
       memberUids,
       updatedAt: serverTimestamp(),
     });
 
     if (p.qty > 0) {
-      const mvtId = `mvt_init_${p.id}`;
+      const mvtId = initialMovementId!;
       batch.set(doc(db, 'organizations', orgId, 'stockMovements', mvtId), {
         id: mvtId,
         orgId,
@@ -1122,6 +1124,7 @@ export async function recordStockMovement(params: {
           inTransitQty: tgtData?.inTransitQty ?? 0,
           availableQty: Math.max(0, newTgtPhysical - tgtReserved),
           unitCost,
+          lastMovementId: movementId,
           memberUids,
           updatedAt: serverTimestamp(),
         };
@@ -1135,6 +1138,7 @@ export async function recordStockMovement(params: {
             physicalQty: newTgtPhysical,
             availableQty: Math.max(0, newTgtPhysical - tgtReserved),
             unitCost,
+            lastMovementId: movementId,
             updatedAt: serverTimestamp(),
           });
         } else {
@@ -1170,6 +1174,7 @@ export async function recordStockMovement(params: {
           inTransitQty: 0,
           availableQty: newSrcAvailable,
           unitCost,
+          lastMovementId: movementId,
           memberUids,
           updatedAt: serverTimestamp(),
         });

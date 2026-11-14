@@ -212,9 +212,45 @@ service cloud.firestore {
         && data.createdAt is timestamp;
     }
 
+    function isLinkedStockBalanceMovement(orgId, data, quantityDelta) {
+      let movementPath = /databases/$(database)/documents/organizations/$(orgId)/stockMovements/$(data.lastMovementId);
+      let movement = getAfter(movementPath).data;
+      return data.lastMovementId is string
+        && isValidId(data.lastMovementId)
+        && existsAfter(movementPath)
+        && movement.id == data.lastMovementId
+        && movement.orgId == orgId
+        && movement.productId == data.productId
+        && movement.performedByUid == request.auth.uid
+        && movement.createdAt == request.time
+        && (
+          (movement.movementType == 'IN'
+            && quantityDelta > 0
+            && movement.quantity == quantityDelta
+            && movement.warehouseId == data.warehouseId
+            && movement.locationId == data.locationId)
+          || (movement.movementType == 'OUT'
+            && quantityDelta < 0
+            && movement.quantity == quantityDelta
+            && movement.warehouseId == data.warehouseId
+            && movement.locationId == data.locationId)
+          || (movement.movementType == 'ADJUSTMENT'
+            && movement.quantity == quantityDelta
+            && movement.warehouseId == data.warehouseId
+            && movement.locationId == data.locationId)
+          || (movement.movementType == 'TRANSFER'
+            && ((movement.warehouseId == data.warehouseId
+                && movement.locationId == data.locationId
+                && quantityDelta == -movement.quantity)
+              || (movement.targetWarehouseId == data.warehouseId
+                && movement.targetLocationId == data.locationId
+                && quantityDelta == movement.quantity)))
+        );
+    }
+
     function isValidStockBalance(data, orgId) {
       return data.keys().hasAll(['id', 'orgId', 'productId', 'productSku', 'productName', 'warehouseId', 'warehouseName', 'locationId', 'locationCode', 'physicalQty', 'reservedQty', 'onOrderQty', 'inTransitQty', 'availableQty', 'unitCost', 'memberUids', 'updatedAt'])
-        && data.keys().hasOnly(['id', 'orgId', 'productId', 'productSku', 'productName', 'warehouseId', 'warehouseName', 'locationId', 'locationCode', 'physicalQty', 'reservedQty', 'onOrderQty', 'inTransitQty', 'availableQty', 'unitCost', 'memberUids', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'orgId', 'productId', 'productSku', 'productName', 'warehouseId', 'warehouseName', 'locationId', 'locationCode', 'physicalQty', 'reservedQty', 'onOrderQty', 'inTransitQty', 'availableQty', 'unitCost', 'lastMovementId', 'memberUids', 'updatedAt'])
         && isValidId(data.id)
         && data.orgId == orgId
         && isValidId(data.productId)
@@ -228,8 +264,10 @@ service cloud.firestore {
         && data.reservedQty is number && data.reservedQty >= 0
         && data.onOrderQty is number && data.onOrderQty >= 0
         && data.inTransitQty is number && data.inTransitQty >= 0
-        && data.availableQty is number && data.availableQty >= 0
+        && data.availableQty is number && data.availableQty == (data.physicalQty > data.reservedQty ? data.physicalQty - data.reservedQty : 0)
+        && data.reservedQty <= data.physicalQty
         && data.unitCost is number && data.unitCost >= 0
+        && (!('lastMovementId' in data) || isValidId(data.lastMovementId))
         && isValidMemberUids(data.memberUids)
         && data.updatedAt is timestamp;
     }
@@ -814,7 +852,9 @@ service cloud.firestore {
           && isOrgOperator(orgId)
           && isValidStockBalance(incoming(), orgId)
           && incoming().id == balanceId
-          && incoming().updatedAt == request.time;
+          && incoming().updatedAt == request.time
+          && (incoming().physicalQty == 0 && !('lastMovementId' in incoming())
+            || isLinkedStockBalanceMovement(orgId, incoming(), incoming().physicalQty));
         allow update: if isVerifiedUser()
           && isValidId(orgId)
           && isValidId(balanceId)
@@ -826,9 +866,15 @@ service cloud.firestore {
           && incoming().warehouseId == existing().warehouseId
           && incoming().locationId == existing().locationId
           && incoming().updatedAt == request.time
+          && (incoming().physicalQty == existing().physicalQty && incoming().unitCost == existing().unitCost
+              && ((!('lastMovementId' in existing()) && !('lastMovementId' in incoming()))
+                || (('lastMovementId' in existing()) && incoming().lastMovementId == existing().lastMovementId))
+            || (incoming().lastMovementId is string
+              && (!('lastMovementId' in existing()) || incoming().lastMovementId != existing().lastMovementId)
+              && isLinkedStockBalanceMovement(orgId, incoming(), incoming().physicalQty - existing().physicalQty)))
           && incoming().diff(existing()).affectedKeys().hasOnly([
             'productSku', 'productName', 'warehouseName', 'locationCode',
-            'physicalQty', 'reservedQty', 'onOrderQty', 'inTransitQty', 'availableQty', 'unitCost', 'updatedAt'
+            'physicalQty', 'reservedQty', 'onOrderQty', 'inTransitQty', 'availableQty', 'unitCost', 'lastMovementId', 'updatedAt'
           ]);
         allow delete: if false;
       }
