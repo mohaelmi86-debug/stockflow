@@ -272,7 +272,7 @@ billingRouter.post('/webhook', async (req, res) => {
     if ((await eventRef.get()).exists) return res.json({ received: true, duplicate: true });
     const object = event.data.object;
     const metadata = (object.metadata || {}) as Record<string, string>;
-    let orgId = metadata.orgId;
+    let orgId: string | undefined = metadata.orgId;
     let planCode = metadata.planCode as PlanCode | undefined;
     let cycle = metadata.billingCycle as BillingCycle | undefined;
     const customerId = typeof object.customer === 'string' ? object.customer : undefined;

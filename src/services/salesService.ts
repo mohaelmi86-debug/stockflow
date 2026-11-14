@@ -1039,7 +1039,8 @@ export async function recordTreasuryPayment(params: {
         paidAmount: nextPaid, status: nextStatus, updatedAt: serverTimestamp(),
       });
       if (relatedOrderRef && relatedOrderSnap?.exists()) {
-        const currentStatus = String(relatedOrderSnap.data()?.status || '');
+        const relatedOrderData = relatedOrderSnap.data() as { status?: string } | undefined;
+        const currentStatus = String(relatedOrderData?.status || '');
         if (!['canceled', 'closed'].includes(currentStatus)) {
           tx.update(relatedOrderRef, { status: 'closed', updatedAt: serverTimestamp() });
         }
