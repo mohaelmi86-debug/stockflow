@@ -28,6 +28,8 @@ assert.ok(orgRules.includes("incoming().plan == 'starter'"),
   'New organizations must be created on the free Starter plan.');
 assert.ok((rules.match(/allow create, update, delete: if false;/g) ?? []).length >= 2,
   'Stock balances and stock movements must be immutable to browser clients; trusted server routes own mutations.');
+assert.ok(rules.includes('incoming().lines == existing().lines') && rules.includes('incoming().stockReserved == existing().stockReserved'),
+  'Browser clients must not mutate sales-order reservation or delivery lines.');
 assert.ok(stockEngine.includes("router.use(requireAuth)") && stockEngine.includes("member.status !== 'active'") && stockEngine.includes("['owner', 'admin', 'manager', 'operator']"),
   'Stock engine endpoints must require Firebase authentication and an active operator membership.');
 assert.ok(rules.includes("getAfter(/databases/$(database)/documents/organizations/$(orgId)).data.plan == incoming().plan"),
@@ -64,6 +66,8 @@ assert.ok(sales.includes('invoiceCounters') && sales.includes('runTransaction'),
   'Invoice sequence allocation must be transactional.');
 assert.ok(sales.includes('latestInvoiceQuery') && sales.includes('orderBy(\'invoiceNumber\', \'desc\')'),
   'First invoice counter must seed itself from existing invoice history.');
+assert.ok(sales.includes('linkedOrderSnap') && sales.includes('allUnitsDelivered') && sales.includes("status === 'delivered'"),
+  'A sales order can only become invoiced after every unit has been delivered and all reservations are released.');
 assert.ok(sales.includes('Facture cible introuvable') && sales.includes('paidAmount'),
   'Payment workflow must read and validate the current invoice in a transaction.');
 assert.ok(erp.includes("callStockEngine('movement'") && purchasing.includes("callStockEngine('receipt'"),
