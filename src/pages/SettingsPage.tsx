@@ -25,7 +25,6 @@ import {
   removeOrganizationMember,
   updateOrganizationDetails,
   updateOrganizationMemberRole,
-  updateOrganizationPlan,
 } from '../services/erpService.ts';
 import {
   addOrganizationMemberSchema,
@@ -168,7 +167,6 @@ export function SettingsPage() {
   );
   const [billingStatus, setBillingStatus] = useState<BillingStatusResponse | null>(null);
   const [checkoutPendingUrl, setCheckoutPendingUrl] = useState<string | null>(null);
-  const [sandboxTargetPlan, setSandboxTargetPlan] = useState<PlanCode | null>(null);
   const [billingBusy, setBillingBusy] = useState(false);
 
   // Team RBAC state
@@ -254,17 +252,6 @@ export function SettingsPage() {
           if (!res.ok || !data.verified || !data.planCode) {
             throw new Error(data.error || 'Paiement Stripe non confirmé.');
           }
-          await updateOrganizationPlan({
-            orgId: activeOrg.id,
-            planCode: data.planCode,
-            billingCycle: data.billingCycle ?? 'monthly',
-            subscriptionStatus: 'active',
-            stripeCustomerId: data.stripeCustomerId,
-            stripeSubscriptionId: data.stripeSubscriptionId,
-            mode: 'stripe',
-            actor: { uid: user.uid, email: user.email ?? 'admin@stockflow.local' },
-            memberUids: activeOrg.memberUids,
-          });
           await Promise.all([refreshWorkspace(), invalidateAll()]);
           if (active) {
             toast({
@@ -358,94 +345,28 @@ export function SettingsPage() {
       const token = await getIdToken();
       const res = await fetch('/api/billing/checkout-session', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          orgId: activeOrg.id,
-          orgName: activeOrg.name,
-          planCode: targetPlan,
-          billingCycle,
-          customerEmail: user.email ?? undefined,
-        }),
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ orgId: activeOrg.id, planCode: targetPlan, billingCycle }),
       });
-      const data = (await res.json()) as {
-        mode?: 'stripe' | 'sandbox' | 'free';
-        checkoutUrl?: string;
-        message?: string;
-        error?: string;
-      };
-      if (!res.ok) {
-        throw new Error(data.error || 'Échec de l’initialisation du paiement.');
-      }
-
-      if (data.mode === 'stripe' && data.checkoutUrl) {
-        setCheckoutPendingUrl(data.checkoutUrl);
-        toast({
-          variant: 'info',
-          title: 'Session Stripe prête',
-          description: 'Ouvrez le lien Stripe Checkout ci-dessous pour finaliser le paiement.',
-        });
-      } else if (data.mode === 'free') {
-        await updateOrganizationPlan({
-          orgId: activeOrg.id,
-          planCode: 'starter',
-          billingCycle,
-          subscriptionStatus: 'active',
-          mode: 'free',
-          actor: { uid: user.uid, email: user.email ?? 'admin@stockflow.local' },
-          memberUids: activeOrg.memberUids,
-        });
+      const data = await res.json() as { mode?: 'stripe' | 'free'; checkoutUrl?: string; error?: string };
+      if (!res.ok) throw new Error(data.error || 'Souscription impossible.');
+      if (data.mode === 'free') {
         await Promise.all([refreshWorkspace(), invalidateAll()]);
-        toast({ variant: 'success', title: 'Plan Starter activé' });
+        toast({ variant: 'success', title: 'Plan Starter activé', description: 'Le changement a été confirmé côté serveur.' });
       } else {
-        setSandboxTargetPlan(targetPlan);
+        if (!data.checkoutUrl) throw new Error('Stripe n’a pas retourné de lien de paiement.');
+        setCheckoutPendingUrl(data.checkoutUrl);
+        toast({ variant: 'info', title: 'Session Stripe prête', description: 'Finalisez le paiement sur Stripe. Le plan sera activé après confirmation serveur.' });
       }
     } catch (err) {
-      toast({
-        variant: 'error',
-        title: 'Facturation impossible',
-        description: err instanceof Error ? err.message : 'Erreur Stripe.',
-      });
-    } finally {
-      setBillingBusy(false);
-    }
-  };
-
-  const handleConfirmSandboxPlan = async () => {
-    if (!activeOrg || !user || !sandboxTargetPlan) return;
-    setBillingBusy(true);
-    try {
-      await updateOrganizationPlan({
-        orgId: activeOrg.id,
-        planCode: sandboxTargetPlan,
-        billingCycle,
-        subscriptionStatus: 'active',
-        mode: 'sandbox',
-        actor: { uid: user.uid, email: user.email ?? 'admin@stockflow.local' },
-        memberUids: activeOrg.memberUids,
-      });
-      await Promise.all([refreshWorkspace(), invalidateAll()]);
-      toast({
-        variant: 'success',
-        title: `Plan ${PLAN_QUOTAS[sandboxTargetPlan].name} activé`,
-        description: 'Quotas et droits SaaS mis à jour (mode démonstration sans Stripe).',
-      });
-      setSandboxTargetPlan(null);
-    } catch (err) {
-      toast({
-        variant: 'error',
-        title: 'Erreur de mise à jour',
-        description: err instanceof Error ? err.message : 'Opération refusée.',
-      });
+      toast({ variant: 'error', title: 'Facturation impossible', description: err instanceof Error ? err.message : 'Erreur Stripe.' });
     } finally {
       setBillingBusy(false);
     }
   };
 
   const handleOpenCustomerPortal = async () => {
-    if (!activeOrg?.stripeCustomerId) return;
+    if (!activeOrg || !activeOrg.stripeCustomerId) return;
     setBillingBusy(true);
     try {
       const token = await getIdToken();
@@ -455,7 +376,7 @@ export function SettingsPage() {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ stripeCustomerId: activeOrg.stripeCustomerId }),
+        body: JSON.stringify({ orgId: activeOrg.id }),
       });
       const data = (await res.json()) as { portalUrl?: string; error?: string };
       if (!res.ok || !data.portalUrl) {
@@ -1004,7 +925,7 @@ export function SettingsPage() {
                   Passerelle Stripe :{' '}
                   {billingStatus?.stripeConfigured
                     ? 'Stripe Checkout actif côté serveur'
-                    : 'Mode démonstration SaaS (STRIPE_SECRET_KEY non configurée)'}
+                    : 'Souscriptions suspendues : Stripe doit être configuré côté serveur'}
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -1128,7 +1049,7 @@ export function SettingsPage() {
                       type="button"
                       variant={isCurrent ? 'outline' : 'primary'}
                       className="w-full"
-                      disabled={isCurrent || !isAdmin || billingBusy}
+                      disabled={isCurrent || !isAdmin || billingBusy || (plan.priceMonthlyEur > 0 && !billingStatus?.stripeConfigured)}
                       onClick={() => handleSelectPlan(plan.code)}
                     >
                       {isCurrent
@@ -1225,7 +1146,7 @@ export function SettingsPage() {
               {
                 title: 'Isolation stricte par locataire (Multi-Tenant)',
                 detail:
-                  'Toutes les collections sont imbriquées sous organizations/{orgId} et vérifiées par règles Firestore via memberUids et rôle actif.',
+                  'Les lectures des collections d’organisation sont vérifiées par les règles Firestore à partir de l’adhésion active et du rôle.',
               },
               {
                 title: 'Intégrité transactionnelle des stocks',
@@ -1383,38 +1304,6 @@ export function SettingsPage() {
             </Button>
           </div>
         </div>
-      </Modal>
-
-      {/* Sandbox plan activation confirmation */}
-      <Modal
-        open={Boolean(sandboxTargetPlan)}
-        onClose={() => setSandboxTargetPlan(null)}
-        title="Activer l’abonnement (mode démonstration SaaS)"
-        subtitle="STRIPE_SECRET_KEY n’étant pas configurée dans l’environnement serveur, cette opération simule la souscription sans prélèvement réel."
-      >
-        {sandboxTargetPlan && (
-          <div className="space-y-4 text-sm text-slate-600 dark:text-slate-300">
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950">
-              <p className="font-semibold text-slate-900 dark:text-white">
-                Plan {PLAN_QUOTAS[sandboxTargetPlan].name} —{' '}
-                {billingCycle === 'annual' ? 'Facturation annuelle (-20%)' : 'Facturation mensuelle'}
-              </p>
-              <p className="mt-1 text-xs font-mono">
-                {PLAN_QUOTAS[sandboxTargetPlan].maxUsers} utilisateurs ·{' '}
-                {PLAN_QUOTAS[sandboxTargetPlan].maxWarehouses} entrepôts ·{' '}
-                {PLAN_QUOTAS[sandboxTargetPlan].maxProducts.toLocaleString('fr-FR')} produits
-              </p>
-            </div>
-            <div className="flex justify-end gap-3">
-              <Button type="button" variant="outline" onClick={() => setSandboxTargetPlan(null)}>
-                Annuler
-              </Button>
-              <Button type="button" disabled={billingBusy} onClick={handleConfirmSandboxPlan}>
-                {billingBusy ? 'Activation...' : 'Confirmer le changement de plan'}
-              </Button>
-            </div>
-          </div>
-        )}
       </Modal>
 
       {/* Remove member confirmation */}

@@ -619,6 +619,7 @@ export async function validateGoodsReceipt(params: {
         const newPhysical = (existingBal?.physicalQty ?? 0) + rLine.acceptedQty;
         const reserved = existingBal?.reservedQty ?? 0;
         const newOnOrder = Math.max(0, (existingBal?.onOrderQty ?? 0) - rLine.acceptedQty);
+        const mvtId = generateSafeId('mvt');
 
         if (snap.exists()) {
           tx.update(balRef, {
@@ -626,6 +627,7 @@ export async function validateGoodsReceipt(params: {
             availableQty: Math.max(0, newPhysical - reserved),
             onOrderQty: newOnOrder,
             unitCost: rLine.unitCost,
+            lastMovementId: mvtId,
             updatedAt: serverTimestamp(),
           });
         } else {
@@ -645,12 +647,12 @@ export async function validateGoodsReceipt(params: {
             inTransitQty: 0,
             availableQty: newPhysical,
             unitCost: rLine.unitCost,
+            lastMovementId: mvtId,
             memberUids,
             updatedAt: serverTimestamp(),
           });
         }
 
-        const mvtId = generateSafeId('mvt');
         tx.set(doc(db, 'organizations', orgId, 'stockMovements', mvtId), {
           id: mvtId,
           orgId,
