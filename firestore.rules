@@ -898,54 +898,19 @@ service cloud.firestore {
         allow delete: if isVerifiedUser() && isValidId(orgId) && isValidId(locationId) && isOrgAdmin(orgId);
       }
 
+      // Inventory mutations are server-only. The Admin SDK stock engine validates
+      // membership, command-line invariants and commits balances with ledger entries.
       match /stockBalances/{balanceId} {
         allow get: if isSignedIn() && isValidId(orgId) && isValidId(balanceId) && isOrgMember(orgId);
         allow list: if isValidId(orgId) && isOrgMember(orgId);
-        allow create: if isVerifiedUser()
-          && isValidId(orgId)
-          && isValidId(balanceId)
-          && isOrgOperator(orgId)
-          && isValidStockBalance(incoming(), orgId)
-          && incoming().id == balanceId
-          && incoming().updatedAt == request.time
-          && (incoming().physicalQty == 0 && !('lastMovementId' in incoming())
-            || isLinkedStockBalanceMovement(orgId, incoming(), incoming().physicalQty));
-        allow update: if isVerifiedUser()
-          && isValidId(orgId)
-          && isValidId(balanceId)
-          && isOrgOperator(orgId)
-          && isValidStockBalance(incoming(), orgId)
-          && incoming().id == existing().id
-          && incoming().orgId == existing().orgId
-          && incoming().productId == existing().productId
-          && incoming().warehouseId == existing().warehouseId
-          && incoming().locationId == existing().locationId
-          && incoming().updatedAt == request.time
-          && (incoming().physicalQty == existing().physicalQty && incoming().unitCost == existing().unitCost
-              && ((!('lastMovementId' in existing()) && !('lastMovementId' in incoming()))
-                || (('lastMovementId' in existing()) && incoming().lastMovementId == existing().lastMovementId))
-            || (incoming().lastMovementId is string
-              && (!('lastMovementId' in existing()) || incoming().lastMovementId != existing().lastMovementId)
-              && isLinkedStockBalanceMovement(orgId, incoming(), incoming().physicalQty - existing().physicalQty)))
-          && incoming().diff(existing()).affectedKeys().hasOnly([
-            'productSku', 'productName', 'warehouseName', 'locationCode',
-            'physicalQty', 'reservedQty', 'onOrderQty', 'inTransitQty', 'availableQty', 'unitCost', 'lastMovementId', 'updatedAt'
-          ]);
-        allow delete: if false;
+        allow create, update, delete: if false;
       }
 
+      // The movement ledger is append-only and written only by the trusted stock engine.
       match /stockMovements/{movementId} {
         allow get: if isSignedIn() && isValidId(orgId) && isValidId(movementId) && isOrgMember(orgId);
         allow list: if isValidId(orgId) && isOrgMember(orgId);
-        allow create: if isVerifiedUser()
-          && isValidId(orgId)
-          && isValidId(movementId)
-          && isOrgOperator(orgId)
-          && isValidStockMovement(incoming(), orgId)
-          && incoming().id == movementId
-          && incoming().createdAt == request.time
-          && isMovementLinkedToBalances(orgId, incoming());
-        allow update, delete: if false;
+        allow create, update, delete: if false;
       }
 
       match /auditLogs/{logId} {
@@ -1073,14 +1038,7 @@ service cloud.firestore {
       match /goodsReceipts/{receiptId} {
         allow get: if isSignedIn() && isValidId(orgId) && isValidId(receiptId) && isOrgMember(orgId);
         allow list: if isValidId(orgId) && isOrgMember(orgId);
-        allow create: if isVerifiedUser()
-          && isValidId(orgId)
-          && isValidId(receiptId)
-          && isOrgOperator(orgId)
-          && isValidGoodsReceipt(incoming(), orgId)
-          && incoming().id == receiptId
-          && incoming().createdAt == request.time;
-        allow update, delete: if false;
+        allow create, update, delete: if false;
       }
 
       match /supplierInvoices/{invoiceId} {
@@ -1193,12 +1151,13 @@ service cloud.firestore {
           && incoming().createdByUid == existing().createdByUid
           && incoming().createdAt == existing().createdAt
           && incoming().updatedAt == request.time
+          && incoming().lines == existing().lines
+          && incoming().stockReserved == existing().stockReserved
           && existing().status != 'closed'
           && existing().status != 'canceled'
           && incoming().diff(existing()).affectedKeys().hasOnly([
-            'status', 'stockReserved', 'expectedDeliveryDate', 'paymentTerms',
-            'shippingCost', 'subtotalHt', 'vatTotal', 'totalTtc',
-            'lines', 'notes', 'updatedAt'
+            'status', 'expectedDeliveryDate', 'paymentTerms',
+            'shippingCost', 'subtotalHt', 'vatTotal', 'totalTtc', 'notes', 'updatedAt'
           ]);
         allow delete: if false;
       }
@@ -1206,14 +1165,7 @@ service cloud.firestore {
       match /deliveryNotes/{deliveryId} {
         allow get: if isSignedIn() && isValidId(orgId) && isValidId(deliveryId) && isOrgMember(orgId);
         allow list: if isValidId(orgId) && isOrgMember(orgId);
-        allow create: if isVerifiedUser()
-          && isValidId(orgId)
-          && isValidId(deliveryId)
-          && isOrgOperator(orgId)
-          && isValidDeliveryNote(incoming(), orgId)
-          && incoming().id == deliveryId
-          && incoming().createdAt == request.time;
-        allow update, delete: if false;
+        allow create, update, delete: if false;
       }
 
       match /invoiceCounters/{counterId} {
