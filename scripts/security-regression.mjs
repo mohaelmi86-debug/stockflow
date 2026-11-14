@@ -75,9 +75,9 @@ assert.ok(migration.includes("mode: options.apply ? 'apply-safe-allocations' : '
   'The historical stock scan must be read-only by default.');
 assert.ok(migration.includes('--confirm-project-id=') && migration.includes('--confirm-database-id='),
   'Applying a historical migration must require explicit project and database confirmation.');
-assert.ok(migration.includes('transaction.update(orderRef') && migration.includes('reservationAllocations'),
+assert.ok(migration.includes('tx.update(orderRef') && migration.includes('reservationAllocations'),
   'The migration may only attach location allocations to the matching order lines.');
-assert.ok(!migration.includes('transaction.update(balanceRef') && !migration.includes('stockMovements'),
+assert.ok(!migration.includes('tx.update(balanceRef') && !migration.includes('tx.set(db.doc(`organizations/${plan.orgId}/stockMovements'),
   'The historical migration must not alter stock quantities or fabricate ledger movements.');
 
 console.log('StockFlow named database and migration safety checks: PASS');
