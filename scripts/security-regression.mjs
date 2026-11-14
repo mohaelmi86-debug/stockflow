@@ -14,6 +14,8 @@ assert.ok(!rules.includes('request.auth.uid in resource.data.memberUids'),
   'Firestore list rules must not rely on stale memberUids arrays.');
 assert.ok(rules.includes('function isOrgMember(orgId)') && rules.includes("data.status == 'active'"),
   'Firestore tenant checks must require an active membership.');
+assert.ok(rules.includes("getAfter(/databases/$(database)/documents/organizations/$(orgId)/members/$(userId)).data.role == incoming().role"),
+  'A user cannot forge the role stored in their personal organization membership mirror.');
 const orgStart = rules.indexOf('match /organizations/{orgId}');
 const orgEnd = rules.indexOf('match /members/{memberUid}', orgStart);
 const orgRules = rules.slice(orgStart, orgEnd);

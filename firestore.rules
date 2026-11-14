@@ -653,7 +653,9 @@ service cloud.firestore {
           && isValidUserMembership(incoming())
           && incoming().orgId == orgId
           && incoming().joinedAt == request.time
-          && existsAfter(/databases/$(database)/documents/organizations/$(orgId)/members/$(userId));
+          && existsAfter(/databases/$(database)/documents/organizations/$(orgId)/members/$(userId))
+          && getAfter(/databases/$(database)/documents/organizations/$(orgId)/members/$(userId)).data.status == 'active'
+          && getAfter(/databases/$(database)/documents/organizations/$(orgId)/members/$(userId)).data.role == incoming().role;
         allow update: if isVerifiedUser()
           && isValidId(userId)
           && isValidId(orgId)
