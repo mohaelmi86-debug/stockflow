@@ -36,7 +36,7 @@ assert.ok(broken.balanceFindings.some((item) => item.code === 'available_quantit
 const allocated = buildOrgPlan({
   orgId:'org_1', orgData,
   orders:[{...order('so_1'),lines:[{productId:'prod_1',productSku:'SKU-1',reservedQty:3,reservationAllocations:[{warehouseId:'wh_1',locationId:'loc_1',quantity:3}]}]}],
-  balances:[balance()], movements:[{id:'mvt_1',productId:'prod_1',warehouseId:'wh_1',locationId:'loc_1'}]
+  balances:[balance({reservedQty:3,availableQty:9})], movements:[{id:'mvt_1',productId:'prod_1',warehouseId:'wh_1',locationId:'loc_1'}]
 });
 assert.equal(allocated.safeAssignments.length, 0);
 assert.equal(allocated.findings.length, 0);
