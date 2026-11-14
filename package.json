@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test:security": "node scripts/security-regression.mjs"
+    "test:security": "node scripts/security-regression.mjs",
+    "test:firestore-rules": "node scripts/firestore-rules.test.mjs"
   },
   "dependencies": {
     "@firebase/eslint-plugin-security-rules": "^0.0.2",

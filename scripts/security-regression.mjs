@@ -24,6 +24,10 @@ assert.ok(!updateRule.includes("'plan'") && !updateRule.includes('stripeCustomer
   'Clients must not be able to update subscription or Stripe fields.');
 assert.ok(orgRules.includes("incoming().plan == 'starter'"),
   'New organizations must be created on the free Starter plan.');
+assert.ok(rules.includes('function isMovementLinkedToBalances') && rules.includes('isMovementLinkedToBalances(orgId, incoming())'),
+  'Stock movements must be linked back to the affected balance in the same transaction.');
+assert.ok(rules.includes("getAfter(/databases/$(database)/documents/organizations/$(orgId)).data.plan == incoming().plan"),
+  'User membership mirrors must match the authoritative organization plan.');
 assert.ok(rules.includes('function isLinkedStockBalanceMovement') && rules.includes('getAfter(movementPath)'),
   'Stock balances must be linked to a movement in the same Firestore transaction.');
 assert.ok(rules.includes('incoming().lastMovementId') && rules.includes("'lastMovementId'"),

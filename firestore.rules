@@ -248,6 +248,44 @@ service cloud.firestore {
         );
     }
 
+    function isBalanceAfterLinkedToMovement(orgId, movement, warehouseId, locationId, quantityDelta) {
+      let balanceId = movement.productId + '_' + warehouseId + '_' + locationId;
+      let balancePath = /databases/$(database)/documents/organizations/$(orgId)/stockBalances/$(balanceId);
+      return existsAfter(balancePath)
+        && isBalanceAfterLinkedToMovementData(balancePath, movement, warehouseId, locationId, quantityDelta);
+    }
+
+    function isBalanceAfterLinkedToMovementData(balancePath, movement, warehouseId, locationId, quantityDelta) {
+      let balanceAfter = getAfter(balancePath).data;
+      let balanceBeforeExists = exists(balancePath);
+      let balanceBeforeQty = balanceBeforeExists ? get(balancePath).data.physicalQty : 0;
+      return balanceAfter.productId == movement.productId
+        && balanceAfter.warehouseId == warehouseId
+        && balanceAfter.locationId == locationId
+        && balanceAfter.lastMovementId == movement.id
+        && balanceAfter.productId == movement.productId
+        && balanceAfter.physicalQty - balanceBeforeQty == quantityDelta;
+    }
+
+    function isMovementLinkedToBalances(orgId, movement) {
+      return (
+        movement.movementType in ['IN', 'OUT', 'ADJUSTMENT']
+        && isBalanceAfterLinkedToMovement(
+          orgId, movement, movement.warehouseId, movement.locationId, movement.quantity
+        )
+      ) || (
+        movement.movementType == 'TRANSFER'
+        && 'targetWarehouseId' in movement
+        && 'targetLocationId' in movement
+        && isBalanceAfterLinkedToMovement(
+          orgId, movement, movement.warehouseId, movement.locationId, -movement.quantity
+        )
+        && isBalanceAfterLinkedToMovement(
+          orgId, movement, movement.targetWarehouseId, movement.targetLocationId, movement.quantity
+        )
+      );
+    }
+
     function isValidStockBalance(data, orgId) {
       return data.keys().hasAll(['id', 'orgId', 'productId', 'productSku', 'productName', 'warehouseId', 'warehouseName', 'locationId', 'locationCode', 'physicalQty', 'reservedQty', 'onOrderQty', 'inTransitQty', 'availableQty', 'unitCost', 'memberUids', 'updatedAt'])
         && data.keys().hasOnly(['id', 'orgId', 'productId', 'productSku', 'productName', 'warehouseId', 'warehouseName', 'locationId', 'locationCode', 'physicalQty', 'reservedQty', 'onOrderQty', 'inTransitQty', 'availableQty', 'unitCost', 'lastMovementId', 'memberUids', 'updatedAt'])
@@ -293,6 +331,10 @@ service cloud.firestore {
         && (!('targetLocationId' in data) || (data.targetLocationId is string && data.targetLocationId.size() <= 128))
         && (!('targetLocationCode' in data) || (data.targetLocationCode is string && data.targetLocationCode.size() <= 32))
         && data.quantity is number && data.quantity != 0
+        && ((data.movementType == 'IN' && data.quantity > 0)
+          || (data.movementType == 'OUT' && data.quantity < 0)
+          || (data.movementType == 'TRANSFER' && data.quantity > 0)
+          || data.movementType == 'ADJUSTMENT')
         && data.unitCost is number && data.unitCost >= 0
         && data.reason is string && data.reason.size() >= 2 && data.reason.size() <= 300
         && (!('sourceDocumentType' in data) || (data.sourceDocumentType is string && data.sourceDocumentType.size() <= 48))
@@ -653,15 +695,24 @@ service cloud.firestore {
           && isValidUserMembership(incoming())
           && incoming().orgId == orgId
           && incoming().joinedAt == request.time
+          && existsAfter(/databases/$(database)/documents/organizations/$(orgId))
           && existsAfter(/databases/$(database)/documents/organizations/$(orgId)/members/$(userId))
           && getAfter(/databases/$(database)/documents/organizations/$(orgId)/members/$(userId)).data.status == 'active'
-          && getAfter(/databases/$(database)/documents/organizations/$(orgId)/members/$(userId)).data.role == incoming().role;
+          && getAfter(/databases/$(database)/documents/organizations/$(orgId)/members/$(userId)).data.role == incoming().role
+          && getAfter(/databases/$(database)/documents/organizations/$(orgId)).data.name == incoming().orgName
+          && getAfter(/databases/$(database)/documents/organizations/$(orgId)).data.slug == incoming().orgSlug
+          && getAfter(/databases/$(database)/documents/organizations/$(orgId)).data.currency == incoming().currency
+          && getAfter(/databases/$(database)/documents/organizations/$(orgId)).data.plan == incoming().plan;
         allow update: if isVerifiedUser()
           && isValidId(userId)
           && isValidId(orgId)
           && request.auth.uid == userId
           && isValidUserMembership(incoming())
           && incoming().orgId == existing().orgId
+          && incoming().orgName == getAfter(/databases/$(database)/documents/organizations/$(orgId)).data.name
+          && incoming().orgSlug == getAfter(/databases/$(database)/documents/organizations/$(orgId)).data.slug
+          && incoming().currency == getAfter(/databases/$(database)/documents/organizations/$(orgId)).data.currency
+          && incoming().plan == getAfter(/databases/$(database)/documents/organizations/$(orgId)).data.plan
           && incoming().joinedAt == existing().joinedAt
           && incoming().diff(existing()).affectedKeys().hasOnly(['orgName', 'currency']);
         allow delete: if isVerifiedUser() && isValidId(userId) && isValidId(orgId) && request.auth.uid == userId;
@@ -892,7 +943,8 @@ service cloud.firestore {
           && isOrgOperator(orgId)
           && isValidStockMovement(incoming(), orgId)
           && incoming().id == movementId
-          && incoming().createdAt == request.time;
+          && incoming().createdAt == request.time
+          && isMovementLinkedToBalances(orgId, incoming());
         allow update, delete: if false;
       }
 

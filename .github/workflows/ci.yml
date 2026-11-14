@@ -16,16 +16,33 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Java for Firebase Emulator
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
-      - name: Install dependencies
+      - name: Install application dependencies
         run: bun install --frozen-lockfile
+
+      - name: Install Firestore test tooling
+        run: bun install --no-save @firebase/rules-unit-testing@6.0.0 firebase-tools@15.36.0
 
       - name: Security regression checks
         run: bun run test:security
+
+      - name: Firestore Emulator rules tests
+        run: ./node_modules/.bin/firebase emulators:exec --only firestore --project demo-stockflow "bun run test:firestore-rules"
 
       - name: TypeScript check
         run: bun run lint

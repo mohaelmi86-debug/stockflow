@@ -3,7 +3,7 @@
 ## 1. Data Invariants
 1. **Strict Tenant Isolation**: No user can read, list, create, update, or delete any document inside `/organizations/{orgId}/*` unless their verified UID exists in `/organizations/{orgId}/members/{uid}` with `status == 'active'`. Collection reads must use the active membership check; they must not depend on stale `memberUids` snapshots stored on business documents.
 2. **PII Isolation**: `/users/{userId}` containing email and profile PII is strictly readable and writable only by `request.auth.uid == userId`.
-3. **Immutable Stock Ledger**: `stockMovements` and `auditLogs` are append-only; updates and deletes are strictly forbidden. Any physical stock balance change must reference a movement created in the same Firestore transaction, and the movement quantity/location must match the balance delta.
+3. **Immutable Stock Ledger**: `stockMovements` and `auditLogs` are append-only; updates and deletes are strictly forbidden. Every physical stock balance change must reference a movement created in the same Firestore transaction, and every movement must reference the corresponding balance delta (both sides for transfers).
 4. **No Self-Privilege Escalation**: A user's membership mirror can only be created when the corresponding organization member is active and the role exactly matches the authoritative member document. Users cannot modify their own role or plan.
 5. **Temporal & Identity Integrity**: `createdAt` and `updatedAt` must equal `request.time`; `performedByUid`/`actorUid`/`ownerId` must match `request.auth.uid`.
 6. **Path ID & Payload Bounds**: Every document ID matches `^[a-zA-Z0-9_\-]+$` (max 128 chars); every string and array has explicit `.size()` constraints.
