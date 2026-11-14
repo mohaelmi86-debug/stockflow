@@ -62,3 +62,22 @@ assert.ok(sales.includes('lastMovementId: write.movementId'),
   'Sales shipment stock balance writes must reference their immutable movement.');
 
 console.log('StockFlow security regression checks: PASS');
+
+const migration = read('scripts/reconcile-stock-reservations.mjs');
+const admin = read('src/server/firebaseAdmin.ts');
+const firestoreConfig = JSON.parse(read('firebase.json'));
+const appConfig = JSON.parse(read('firebase-applet-config.json'));
+assert.ok(admin.includes('getFirestore(adminApp, firebaseConfig.firestoreDatabaseId)'),
+  'Firebase Admin must use the same named Firestore database as the browser client.');
+assert.ok(firestoreConfig.firestore.some((entry) => entry.database === appConfig.firestoreDatabaseId && entry.rules === 'firestore.rules'),
+  'Firestore security rules must target the configured application database.');
+assert.ok(migration.includes("mode: options.apply ? 'apply-safe-allocations' : 'dry-run-read-only'"),
+  'The historical stock scan must be read-only by default.');
+assert.ok(migration.includes('--confirm-project-id=') && migration.includes('--confirm-database-id='),
+  'Applying a historical migration must require explicit project and database confirmation.');
+assert.ok(migration.includes('tx.update(orderRef') && migration.includes('reservationAllocations'),
+  'The migration may only attach location allocations to the matching order lines.');
+assert.ok(!migration.includes('tx.update(balanceRef') && !migration.includes('tx.set(db.doc(`organizations/${plan.orgId}/stockMovements'),
+  'The historical migration must not alter stock quantities or fabricate ledger movements.');
+
+console.log('StockFlow named database and migration safety checks: PASS');
