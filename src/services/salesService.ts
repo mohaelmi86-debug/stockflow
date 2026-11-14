@@ -878,111 +878,91 @@ export async function createSalesInvoice(params: {
   relatedInvoiceId?: string;
   actor: { uid: string; email: string; displayName: string };
 }): Promise<{ id: string; invoiceNumber: string }> {
-  const {
-    orgId,
-    memberUids,
-    existingInvoices,
-    input,
-    products,
-    customer,
-    linkedOrder,
-    relatedInvoiceId,
-    actor,
-  } = params;
-
+  const { orgId, memberUids, input, products, customer, linkedOrder, relatedInvoiceId, actor } = params;
   const id = generateSafeId('inv');
-  const { sequenceNumber, invoiceNumber } = getNextInvoiceSequence(
-    existingInvoices,
-    input.invoiceType
-  );
-  const productMap = new Map(products.map((p) => [p.id, p]));
-
-  const lines: SalesLine[] = input.lines.map((l) => {
-    const p = productMap.get(l.productId);
+  const issueYear = Number(input.issueDate.slice(0, 4));
+  if (!Number.isInteger(issueYear) || issueYear < 2000 || issueYear > 2100) {
+    throw new Error('Année de facture invalide.');
+  }
+  const prefix = input.invoiceType === 'credit_note' ? 'AV' : input.invoiceType === 'deposit' ? 'ACP' : 'FAC';
+  const productMap = new Map(products.map((product) => [product.id, product]));
+  const lines: SalesLine[] = input.lines.map((line) => {
+    const product = productMap.get(line.productId);
+    if (!product) throw new Error(`Produit introuvable dans le catalogue : ${line.productId}.`);
+    if (product.status !== 'active') throw new Error(`Le produit ${product.sku} n’est pas actif.`);
     return {
-      productId: l.productId,
-      productSku: p?.sku ?? 'SKU',
-      productName: p?.name ?? 'Produit',
-      unit: p?.unit ?? 'unité',
-      quantity: Number(l.quantity),
-      unitPrice: Number(l.unitPrice),
-      discountPct: Number(l.discountPct),
-      vatRate: Number(l.vatRate),
+      productId: product.id,
+      productSku: product.sku,
+      productName: product.name,
+      unit: product.unit,
+      quantity: Number(line.quantity),
+      unitPrice: Number(line.unitPrice),
+      discountPct: Number(line.discountPct),
+      vatRate: Number(line.vatRate),
     };
   });
-
   const totals = computeSalesTotals(lines, Number(input.shippingCost));
-  const fullAddress = [customer.billingAddress, customer.city, customer.country]
-    .filter(Boolean)
-    .join(', ');
+  const fullAddress = [customer.billingAddress, customer.city, customer.country].filter(Boolean).join(', ');
   const path = `organizations/${orgId}/salesInvoices/${id}`;
+  const counterId = `sequence_${issueYear}_${input.invoiceType}`;
 
   try {
-    const batch = writeBatch(db);
-    batch.set(doc(db, 'organizations', orgId, 'salesInvoices', id), {
-      id,
-      orgId,
-      invoiceNumber,
-      invoiceType: input.invoiceType,
-      sequenceNumber,
-      ...(linkedOrder ? { salesOrderId: linkedOrder.id, salesOrderRef: linkedOrder.reference } : {}),
-      customerId: customer.id,
-      customerName: customer.name,
-      customerSiret: customer.siret || '',
-      customerVatNumber: customer.vatNumber || '',
-      customerAddress: fullAddress,
-      issueDate: input.issueDate,
-      dueDate: input.dueDate,
-      shippingCost: Number(input.shippingCost || 0),
-      totalHt: totals.subtotalHt,
-      totalVat: totals.vatTotal,
-      totalTtc: totals.totalTtc,
-      paidAmount: 0,
-      status: 'issued',
-      lines,
-      ...(relatedInvoiceId ? { relatedInvoiceId } : {}),
-      notes: input.notes || '',
-      createdByUid: actor.uid,
-      createdByName: actor.displayName,
-      isDemo: false,
-      memberUids,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
+    const invoiceNumber = await runTransaction(db, async (tx) => {
+      const counterRef = doc(db, 'organizations', orgId, 'invoiceCounters', counterId);
+      const counterSnap = await tx.get(counterRef);
+      const sequenceNumber = counterSnap.exists()
+        ? Number(counterSnap.data().sequenceNumber || 0) + 1
+        : 1;
+      const nextInvoiceNumber = `${prefix}-${issueYear}-${String(sequenceNumber).padStart(5, '0')}`;
 
-    if (
-      linkedOrder &&
-      input.invoiceType === 'invoice' &&
-      (linkedOrder.status === 'delivered' ||
-        linkedOrder.status === 'partially_delivered' ||
-        linkedOrder.status === 'confirmed')
-    ) {
-      batch.update(doc(db, 'organizations', orgId, 'salesOrders', linkedOrder.id), {
-        status: 'invoiced',
+      tx.set(counterRef, {
+        id: counterId,
+        orgId,
+        year: issueYear,
+        invoiceType: input.invoiceType,
+        sequenceNumber,
+        createdByUid: counterSnap.exists() ? counterSnap.data().createdByUid : actor.uid,
+        createdAt: counterSnap.exists() ? counterSnap.data().createdAt : serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
-    }
 
-    const logId = generateSafeId('log');
-    batch.set(doc(db, 'organizations', orgId, 'auditLogs', logId), {
-      id: logId,
-      orgId,
-      actorUid: actor.uid,
-      actorEmail: actor.email,
-      action:
-        input.invoiceType === 'credit_note'
-          ? 'CREDIT_NOTE_ISSUED'
-          : 'SALES_INVOICE_ISSUED',
-      entityType: 'sales_invoice',
-      entityId: id,
-      summary: `${invoiceNumber} (${customer.name}) — ${totals.totalTtc.toFixed(2)} TTC`,
-      memberUids,
-      createdAt: serverTimestamp(),
+      tx.set(doc(db, 'organizations', orgId, 'salesInvoices', id), {
+        id, orgId, invoiceNumber: nextInvoiceNumber, invoiceType: input.invoiceType, sequenceNumber,
+        ...(linkedOrder ? { salesOrderId: linkedOrder.id, salesOrderRef: linkedOrder.reference } : {}),
+        customerId: customer.id, customerName: customer.name,
+        customerSiret: customer.siret || '', customerVatNumber: customer.vatNumber || '',
+        customerAddress: fullAddress,
+        issueDate: input.issueDate, dueDate: input.dueDate,
+        shippingCost: Number(input.shippingCost || 0),
+        totalHt: totals.subtotalHt, totalVat: totals.vatTotal, totalTtc: totals.totalTtc,
+        paidAmount: 0, status: 'issued', lines,
+        ...(relatedInvoiceId ? { relatedInvoiceId } : {}),
+        notes: input.notes || '', createdByUid: actor.uid, createdByName: actor.displayName,
+        isDemo: false, memberUids, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+      });
+
+      if (
+        linkedOrder && input.invoiceType === 'invoice' &&
+        ['delivered', 'partially_delivered', 'confirmed'].includes(linkedOrder.status)
+      ) {
+        tx.update(doc(db, 'organizations', orgId, 'salesOrders', linkedOrder.id), {
+          status: 'invoiced', updatedAt: serverTimestamp(),
+        });
+      }
+
+      const logId = generateSafeId('log');
+      tx.set(doc(db, 'organizations', orgId, 'auditLogs', logId), {
+        id: logId, orgId, actorUid: actor.uid, actorEmail: actor.email,
+        action: input.invoiceType === 'credit_note' ? 'CREDIT_NOTE_ISSUED' : 'SALES_INVOICE_ISSUED',
+        entityType: 'sales_invoice', entityId: id,
+        summary: `${nextInvoiceNumber} (${customer.name}) — ${totals.totalTtc.toFixed(2)} TTC`,
+        memberUids, createdAt: serverTimestamp(),
+      });
+      return nextInvoiceNumber;
     });
-
-    await batch.commit();
     return { id, invoiceNumber };
   } catch (error) {
+    if (error instanceof Error && (error.message.includes('introuvable') || error.message.includes('Année') || error.message.includes('actif'))) throw error;
     handleFirestoreError(error, OperationType.CREATE, path);
   }
 }
@@ -998,104 +978,90 @@ export async function recordTreasuryPayment(params: {
   supplierInvoice?: SupplierInvoice;
   actor: { uid: string; email: string; displayName: string };
 }): Promise<string> {
-  const { orgId, memberUids, input, salesInvoice, supplierInvoice, actor } = params;
+  const { orgId, memberUids, input, actor } = params;
   const id = generateSafeId('pay');
   const nowStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   const reference = `PAY-${nowStr}-${id.slice(-4).toUpperCase()}`;
   const path = `organizations/${orgId}/payments/${id}`;
-
-  const target = input.direction === 'incoming' ? salesInvoice : supplierInvoice;
-  if (!target) {
-    throw new Error('Facture cible introuvable pour ce paiement.');
-  }
-
-  const remaining = Math.max(0, target.totalTtc - target.paidAmount);
-  const appliedAmount = Number(Math.min(remaining, Number(input.amount)).toFixed(2));
-  if (appliedAmount <= 0) {
-    throw new Error('Cette facture est déjà intégralement soldée.');
-  }
-  const nextPaid = Number((target.paidAmount + appliedAmount).toFixed(2));
-  const partyId =
-    input.direction === 'incoming'
-      ? (target as SalesInvoice).customerId
-      : (target as SupplierInvoice).supplierId;
-  const partyName =
-    input.direction === 'incoming'
-      ? (target as SalesInvoice).customerName
-      : (target as SupplierInvoice).supplierName;
+  const invoiceCollection = input.direction === 'incoming' ? 'salesInvoices' : 'supplierInvoices';
 
   try {
-    const batch = writeBatch(db);
-    batch.set(doc(db, 'organizations', orgId, 'payments', id), {
-      id,
-      orgId,
-      reference,
-      direction: input.direction,
-      invoiceId: target.id,
-      invoiceNumber: target.invoiceNumber,
-      partyId,
-      partyName,
-      amount: appliedAmount,
-      method: input.method,
-      paymentDate: input.paymentDate,
-      notes: input.notes || '',
-      recordedByUid: actor.uid,
-      recordedByName: actor.displayName,
-      memberUids,
-      createdAt: serverTimestamp(),
-    });
-
-    if (input.direction === 'incoming' && salesInvoice) {
-      const nextStatus: SalesInvoice['status'] =
-        nextPaid >= salesInvoice.totalTtc - 0.005 ? 'paid' : 'partially_paid';
-      batch.update(doc(db, 'organizations', orgId, 'salesInvoices', salesInvoice.id), {
-        paidAmount: nextPaid,
-        status: nextStatus,
-        updatedAt: serverTimestamp(),
-      });
-      if (nextStatus === 'paid' && salesInvoice.salesOrderId) {
-        batch.update(doc(db, 'organizations', orgId, 'salesOrders', salesInvoice.salesOrderId), {
-          status: 'closed',
-          updatedAt: serverTimestamp(),
-        });
+    await runTransaction(db, async (tx) => {
+      const invoiceRef = doc(db, 'organizations', orgId, invoiceCollection, input.invoiceId);
+      const invoiceSnap = await tx.get(invoiceRef);
+      if (!invoiceSnap.exists()) throw new Error('Facture cible introuvable.');
+      const invoiceData = invoiceSnap.data() as SalesInvoice | SupplierInvoice;
+      if (input.direction === 'incoming' && (invoiceData as SalesInvoice).invoiceType === 'credit_note') {
+        throw new Error('Un avoir ne peut pas recevoir un encaissement.');
       }
-    } else if (input.direction === 'outgoing' && supplierInvoice) {
-      const nextStatus: SupplierInvoice['status'] =
-        nextPaid >= supplierInvoice.totalTtc - 0.005 ? 'paid' : 'partially_paid';
-      batch.update(doc(db, 'organizations', orgId, 'supplierInvoices', supplierInvoice.id), {
-        paidAmount: nextPaid,
-        status: nextStatus,
-        updatedAt: serverTimestamp(),
-      });
-      if (nextStatus === 'paid') {
-        batch.update(
-          doc(db, 'organizations', orgId, 'purchaseOrders', supplierInvoice.purchaseOrderId),
-          {
-            status: 'closed',
-            updatedAt: serverTimestamp(),
-          }
-        );
+      if (invoiceData.status === 'paid') throw new Error('Cette facture est déjà intégralement soldée.');
+
+      const amount = Number(input.amount);
+      const remaining = Number(Math.max(0, invoiceData.totalTtc - invoiceData.paidAmount).toFixed(2));
+      if (!Number.isFinite(amount) || amount <= 0) throw new Error('Montant de paiement invalide.');
+      if (amount > remaining + 0.005) throw new Error(`Le paiement dépasse le solde restant (${remaining.toFixed(2)}).`);
+      const nextPaid = Number((invoiceData.paidAmount + amount).toFixed(2));
+      const fullyPaid = nextPaid >= invoiceData.totalTtc - 0.005;
+      const nextStatus = fullyPaid ? 'paid' : 'partially_paid';
+
+      let relatedOrderRef: ReturnType<typeof doc> | null = null;
+      let relatedOrderSnap: Awaited<ReturnType<typeof tx.get>> | null = null;
+      if (fullyPaid && input.direction === 'incoming') {
+        const salesOrderId = (invoiceData as SalesInvoice).salesOrderId;
+        if (salesOrderId) {
+          relatedOrderRef = doc(db, 'organizations', orgId, 'salesOrders', salesOrderId);
+          relatedOrderSnap = await tx.get(relatedOrderRef);
+        }
+      } else if (fullyPaid && input.direction === 'outgoing') {
+        const purchaseOrderId = (invoiceData as SupplierInvoice).purchaseOrderId;
+        if (purchaseOrderId) {
+          relatedOrderRef = doc(db, 'organizations', orgId, 'purchaseOrders', purchaseOrderId);
+          relatedOrderSnap = await tx.get(relatedOrderRef);
+        }
       }
-    }
 
-    const logId = generateSafeId('log');
-    batch.set(doc(db, 'organizations', orgId, 'auditLogs', logId), {
-      id: logId,
-      orgId,
-      actorUid: actor.uid,
-      actorEmail: actor.email,
-      action: input.direction === 'incoming' ? 'CLIENT_PAYMENT_RECEIVED' : 'SUPPLIER_PAYMENT_SENT',
-      entityType: 'payment',
-      entityId: id,
-      summary: `${reference} (${input.direction === 'incoming' ? 'Encaissement' : 'Décaissement'}) ${appliedAmount.toFixed(2)} sur ${target.invoiceNumber}`,
-      memberUids,
-      createdAt: serverTimestamp(),
+      const partyId = input.direction === 'incoming'
+        ? (invoiceData as SalesInvoice).customerId
+        : (invoiceData as SupplierInvoice).supplierId;
+      const partyName = input.direction === 'incoming'
+        ? (invoiceData as SalesInvoice).customerName
+        : (invoiceData as SupplierInvoice).supplierName;
+
+      tx.set(doc(db, 'organizations', orgId, 'payments', id), {
+        id, orgId, reference, direction: input.direction,
+        invoiceId: invoiceData.id, invoiceNumber: invoiceData.invoiceNumber,
+        partyId, partyName, amount, method: input.method,
+        paymentDate: input.paymentDate, notes: input.notes || '',
+        recordedByUid: actor.uid, recordedByName: actor.displayName,
+        memberUids, createdAt: serverTimestamp(),
+      });
+      tx.update(invoiceRef, {
+        paidAmount: nextPaid, status: nextStatus, updatedAt: serverTimestamp(),
+      });
+      if (relatedOrderRef && relatedOrderSnap?.exists()) {
+        const currentStatus = String(relatedOrderSnap.data()?.status || '');
+        if (!['canceled', 'closed'].includes(currentStatus)) {
+          tx.update(relatedOrderRef, { status: 'closed', updatedAt: serverTimestamp() });
+        }
+      }
+
+      const logId = generateSafeId('log');
+      tx.set(doc(db, 'organizations', orgId, 'auditLogs', logId), {
+        id: logId, orgId, actorUid: actor.uid, actorEmail: actor.email,
+        action: input.direction === 'incoming' ? 'CLIENT_PAYMENT_RECEIVED' : 'SUPPLIER_PAYMENT_SENT',
+        entityType: 'payment', entityId: id,
+        summary: `${reference} (${input.direction === 'incoming' ? 'Encaissement' : 'Décaissement'}) ${amount.toFixed(2)} sur ${invoiceData.invoiceNumber}`,
+        memberUids, createdAt: serverTimestamp(),
+      });
     });
-
-    await batch.commit();
     return reference;
   } catch (error) {
-    handleFirestoreError(error, OperationType.CREATE, path);
+    if (error instanceof Error && (
+      error.message.includes('Facture') || error.message.includes('solde') ||
+      error.message.includes('Montant') || error.message.includes('avoir') ||
+      error.message.includes('dépasse')
+    )) throw error;
+    handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
 

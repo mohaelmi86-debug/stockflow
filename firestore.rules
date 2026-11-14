@@ -1114,6 +1114,39 @@ service cloud.firestore {
         allow update, delete: if false;
       }
 
+      match /invoiceCounters/{counterId} {
+        allow get: if isValidId(orgId) && isValidId(counterId) && isOrgMember(orgId);
+        allow list: if false;
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(counterId)
+          && isOrgOperator(orgId)
+          && incoming().keys().hasAll(['id', 'orgId', 'year', 'invoiceType', 'sequenceNumber', 'createdByUid', 'createdAt', 'updatedAt'])
+          && incoming().keys().hasOnly(['id', 'orgId', 'year', 'invoiceType', 'sequenceNumber', 'createdByUid', 'createdAt', 'updatedAt'])
+          && incoming().id == counterId
+          && incoming().orgId == orgId
+          && incoming().year is number && incoming().year >= 2000 && incoming().year <= 2100
+          && incoming().invoiceType in ['invoice', 'deposit', 'credit_note']
+          && incoming().sequenceNumber == 1
+          && incoming().createdByUid == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(counterId)
+          && isOrgOperator(orgId)
+          && incoming().id == existing().id
+          && incoming().orgId == existing().orgId
+          && incoming().year == existing().year
+          && incoming().invoiceType == existing().invoiceType
+          && incoming().createdByUid == existing().createdByUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().sequenceNumber == existing().sequenceNumber + 1
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['sequenceNumber', 'updatedAt']);
+        allow delete: if false;
+      }
+
       match /salesInvoices/{invoiceId} {
         allow get: if isSignedIn() && isValidId(orgId) && isValidId(invoiceId) && isOrgMember(orgId);
         allow list: if isValidId(orgId) && isOrgMember(orgId);
