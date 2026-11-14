@@ -475,104 +475,90 @@ export async function reserveSalesOrderStock(params: {
 }): Promise<void> {
   const { orgId, memberUids, order, balances, actor } = params;
   const path = `organizations/${orgId}/salesOrders/${order.id}`;
-
-  const candidateBalances = balances.filter(
-    (b) =>
-      b.warehouseId === order.warehouseId &&
-      order.lines.some((l) => l.productId === b.productId)
+  const candidateBalances = balances.filter((b) =>
+    b.warehouseId === order.warehouseId && order.lines.some((line) => line.productId === b.productId)
   );
 
   try {
     await runTransaction(db, async (tx) => {
-      // 1. ALL READS FIRST
       const soRef = doc(db, 'organizations', orgId, 'salesOrders', order.id);
       const soSnap = await tx.get(soRef);
       if (!soSnap.exists()) throw new Error('Commande client introuvable.');
       const freshOrder = soSnap.data() as SalesOrder;
-      if (freshOrder.status === 'canceled' || freshOrder.status === 'closed') {
-        throw new Error('Impossible de réserver du stock sur une commande annulée ou clôturée.');
+      if (['canceled', 'closed', 'delivered', 'invoiced'].includes(freshOrder.status)) {
+        throw new Error('Impossible de réserver du stock pour cette commande.');
       }
 
-      const balRefs = candidateBalances.map((b) =>
-        doc(db, 'organizations', orgId, 'stockBalances', b.id)
-      );
-      const balSnaps = await Promise.all(balRefs.map((ref) => tx.get(ref)));
+      const uniqueBalanceIds = Array.from(new Set(candidateBalances.map((balance) => balance.id)));
+      const balanceRefs = uniqueBalanceIds.map((id) => doc(db, 'organizations', orgId, 'stockBalances', id));
+      const balanceSnaps = await Promise.all(balanceRefs.map((ref) => tx.get(ref)));
+      const balanceMap = new Map<string, { ref: (typeof balanceRefs)[number]; data: StockBalance }>();
+      balanceSnaps.forEach((snap, index) => {
+        if (snap.exists()) balanceMap.set(uniqueBalanceIds[index], { ref: balanceRefs[index], data: snap.data() as StockBalance });
+      });
 
-      // 2. VALIDATIONS & ALLOCATIONS
-      const freshBalances = balSnaps
-        .filter((s) => s.exists())
-        .map((s) => ({ ref: s.ref, data: s.data() as StockBalance }));
-
-      const updatedLines = freshOrder.lines.map((ol) => ({ ...ol }));
-      const balanceDeltas = new Map<string, { ref: (typeof balRefs)[number]; bal: StockBalance; addReserved: number }>();
+      const updatedLines = freshOrder.lines.map((line) => ({
+        ...line,
+        reservationAllocations: [...(line.reservationAllocations ?? [])],
+      }));
+      const deltas = new Map<string, { ref: (typeof balanceRefs)[number]; data: StockBalance; add: number }>();
 
       for (const line of updatedLines) {
         const needed = Math.max(0, line.quantity - line.deliveredQty - line.reservedQty);
         if (needed <= 0) continue;
-
-        const matching = freshBalances.filter((fb) => fb.data.productId === line.productId);
-        let remainingToReserve = needed;
-        for (const item of matching) {
-          const curEntry = balanceDeltas.get(item.data.id);
-          const alreadyAllocated = curEntry?.addReserved ?? 0;
-          const avail = Math.max(0, item.data.availableQty - alreadyAllocated);
-          if (avail <= 0) continue;
-
-          const take = Math.min(avail, remainingToReserve);
-          balanceDeltas.set(item.data.id, {
-            ref: item.ref,
-            bal: item.data,
-            addReserved: alreadyAllocated + take,
-          });
-          remainingToReserve = Number((remainingToReserve - take).toFixed(3));
-          line.reservedQty = Number((line.reservedQty + take).toFixed(3));
-          if (remainingToReserve <= 0) break;
-        }
-
-        if (remainingToReserve > 0.0001) {
-          throw new Error(
-            `Stock disponible insuffisant dans ${freshOrder.warehouseName} pour réserver ${line.productSku} (manque ${remainingToReserve}).`
+        let remaining = Number(needed.toFixed(3));
+        const matching = Array.from(balanceMap.values()).filter((entry) => entry.data.productId === line.productId);
+        for (const entry of matching) {
+          const existingDelta = deltas.get(entry.data.id);
+          const alreadyAllocated = existingDelta?.add ?? 0;
+          const free = Math.max(0, entry.data.availableQty - alreadyAllocated);
+          if (free <= 0) continue;
+          const take = Number(Math.min(free, remaining).toFixed(3));
+          if (take <= 0) continue;
+          deltas.set(entry.data.id, { ...entry, add: alreadyAllocated + take });
+          const existingAllocation = line.reservationAllocations!.find(
+            (allocation) => allocation.warehouseId === entry.data.warehouseId && allocation.locationId === entry.data.locationId
           );
+          if (existingAllocation) existingAllocation.quantity = Number((existingAllocation.quantity + take).toFixed(3));
+          else line.reservationAllocations!.push({
+            warehouseId: entry.data.warehouseId,
+            locationId: entry.data.locationId,
+            quantity: take,
+          });
+          line.reservedQty = Number((line.reservedQty + take).toFixed(3));
+          remaining = Number((remaining - take).toFixed(3));
+          if (remaining <= 0.0001) break;
+        }
+        if (remaining > 0.0001) {
+          throw new Error(`Stock disponible insuffisant dans ${freshOrder.warehouseName} pour réserver ${line.productSku} (manque ${remaining}).`);
         }
       }
 
-      // 3. ALL WRITES
-      for (const { ref, bal, addReserved } of balanceDeltas.values()) {
-        if (addReserved <= 0) continue;
-        const nextReserved = Number((bal.reservedQty + addReserved).toFixed(3));
-        const nextAvailable = Number(Math.max(0, bal.physicalQty - nextReserved).toFixed(3));
+      for (const { ref, data, add } of deltas.values()) {
+        const reservedQty = Number((data.reservedQty + add).toFixed(3));
         tx.update(ref, {
-          reservedQty: nextReserved,
-          availableQty: nextAvailable,
+          reservedQty,
+          availableQty: Number(Math.max(0, data.physicalQty - reservedQty).toFixed(3)),
           updatedAt: serverTimestamp(),
         });
       }
 
       tx.update(soRef, {
         lines: updatedLines,
-        stockReserved: true,
+        stockReserved: updatedLines.some((line) => line.reservedQty > 0),
         status: freshOrder.status === 'draft' ? 'confirmed' : 'preparing',
         updatedAt: serverTimestamp(),
       });
-
       const logId = generateSafeId('log');
       tx.set(doc(db, 'organizations', orgId, 'auditLogs', logId), {
-        id: logId,
-        orgId,
-        actorUid: actor.uid,
-        actorEmail: actor.email,
-        action: 'SALES_ORDER_STOCK_RESERVED',
-        entityType: 'sales_order',
-        entityId: freshOrder.id,
-        summary: `Réservation atomique de stock pour commande ${freshOrder.reference}`,
-        memberUids,
-        createdAt: serverTimestamp(),
+        id: logId, orgId, actorUid: actor.uid, actorEmail: actor.email,
+        action: 'SALES_ORDER_STOCK_RESERVED', entityType: 'sales_order', entityId: freshOrder.id,
+        summary: `Réservation atomique et ventilée par emplacement pour la commande ${freshOrder.reference}`,
+        memberUids, createdAt: serverTimestamp(),
       });
     });
   } catch (error) {
-    if (error instanceof Error && (error.message.includes('Stock') || error.message.includes('Commande') || error.message.includes('Impossible'))) {
-      throw error;
-    }
+    if (error instanceof Error && (error.message.includes('Stock') || error.message.includes('Commande') || error.message.includes('Impossible'))) throw error;
     handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
@@ -584,12 +570,8 @@ export async function cancelSalesOrder(params: {
   balances: StockBalance[];
   actor: { uid: string; email: string };
 }): Promise<void> {
-  const { orgId, memberUids, order, balances, actor } = params;
+  const { orgId, memberUids, order, actor } = params;
   const path = `organizations/${orgId}/salesOrders/${order.id}`;
-
-  const candidateBalances = balances.filter(
-    (b) => b.warehouseId === order.warehouseId && b.reservedQty > 0
-  );
 
   try {
     await runTransaction(db, async (tx) => {
@@ -601,61 +583,73 @@ export async function cancelSalesOrder(params: {
         throw new Error('Commande déjà clôturée ou annulée.');
       }
 
-      const balRefs = candidateBalances.map((b) =>
-        doc(db, 'organizations', orgId, 'stockBalances', b.id)
+      const allocations = freshOrder.lines.flatMap((line) =>
+        (line.reservationAllocations ?? []).filter((allocation) => allocation.quantity > 0).map((allocation) => ({
+          productId: line.productId,
+          allocation,
+        }))
       );
-      const balSnaps = await Promise.all(balRefs.map((r) => tx.get(r)));
-      const freshBalances = balSnaps
-        .filter((s) => s.exists())
-        .map((s) => ({ ref: s.ref, data: s.data() as StockBalance }));
-
-      const updatedLines = freshOrder.lines.map((l) => ({ ...l }));
-
-      // Release reserved stock if any
-      for (const line of updatedLines) {
-        let toRelease = line.reservedQty;
-        if (toRelease <= 0) continue;
-        const matching = freshBalances.filter((fb) => fb.data.productId === line.productId);
-        for (const item of matching) {
-          if (toRelease <= 0) break;
-          const releaseNow = Math.min(item.data.reservedQty, toRelease);
-          if (releaseNow <= 0) continue;
-          const nextReserved = Number(Math.max(0, item.data.reservedQty - releaseNow).toFixed(3));
-          const nextAvail = Number(Math.max(0, item.data.physicalQty - nextReserved).toFixed(3));
-          tx.update(item.ref, {
-            reservedQty: nextReserved,
-            availableQty: nextAvail,
-            updatedAt: serverTimestamp(),
-          });
-          item.data.reservedQty = nextReserved;
-          toRelease = Number((toRelease - releaseNow).toFixed(3));
-        }
-        line.reservedQty = 0;
+      if (freshOrder.lines.some((line) => line.reservedQty > 0 && !(line.reservationAllocations?.length))) {
+        throw new Error('Réservation historique sans détail par emplacement : réconciliation nécessaire avant annulation.');
       }
 
-      tx.update(soRef, {
-        lines: updatedLines,
-        stockReserved: false,
-        status: 'canceled',
-        updatedAt: serverTimestamp(),
-      });
+      const grouped = new Map<string, { productId: string; warehouseId: string; locationId: string; quantity: number }>();
+      for (const item of allocations) {
+        const key = `${item.productId}_${item.allocation.warehouseId}_${item.allocation.locationId}`;
+        const current = grouped.get(key);
+        if (current) current.quantity = Number((current.quantity + item.allocation.quantity).toFixed(3));
+        else grouped.set(key, {
+          productId: item.productId,
+          warehouseId: item.allocation.warehouseId,
+          locationId: item.allocation.locationId,
+          quantity: item.allocation.quantity,
+        });
+      }
 
+      const refs = Array.from(grouped.entries()).map(([id]) => ({
+        id,
+        ref: doc(db, 'organizations', orgId, 'stockBalances', id),
+      }));
+      const snaps = await Promise.all(refs.map((entry) => tx.get(entry.ref)));
+      const writes: Array<{ ref: (typeof refs)[number]['ref']; reservedQty: number; physicalQty: number }> = [];
+      for (let index = 0; index < refs.length; index++) {
+        const group = grouped.get(refs[index].id)!;
+        const snap = snaps[index];
+        if (!snap.exists()) throw new Error('Solde de stock introuvable pour libérer une réservation.');
+        const balance = snap.data() as StockBalance;
+        if (balance.reservedQty + 0.0001 < group.quantity) {
+          throw new Error(`Réservation incohérente pour ${balance.productSku} sur ${balance.locationCode}.`);
+        }
+        writes.push({
+          ref: refs[index].ref,
+          reservedQty: Number((balance.reservedQty - group.quantity).toFixed(3)),
+          physicalQty: balance.physicalQty,
+        });
+      }
+
+      for (const write of writes) {
+        tx.update(write.ref, {
+          reservedQty: write.reservedQty,
+          availableQty: Number(Math.max(0, write.physicalQty - write.reservedQty).toFixed(3)),
+          updatedAt: serverTimestamp(),
+        });
+      }
+      const updatedLines = freshOrder.lines.map((line) => ({
+        ...line,
+        reservedQty: 0,
+        reservationAllocations: [],
+      }));
+      tx.update(soRef, { lines: updatedLines, stockReserved: false, status: 'canceled', updatedAt: serverTimestamp() });
       const logId = generateSafeId('log');
       tx.set(doc(db, 'organizations', orgId, 'auditLogs', logId), {
-        id: logId,
-        orgId,
-        actorUid: actor.uid,
-        actorEmail: actor.email,
-        action: 'SALES_ORDER_CANCELED',
-        entityType: 'sales_order',
-        entityId: freshOrder.id,
-        summary: `Annulation commande ${freshOrder.reference} (réservations libérées)`,
-        memberUids,
-        createdAt: serverTimestamp(),
+        id: logId, orgId, actorUid: actor.uid, actorEmail: actor.email,
+        action: 'SALES_ORDER_CANCELED', entityType: 'sales_order', entityId: freshOrder.id,
+        summary: `Annulation commande ${freshOrder.reference} (réservations exactes libérées par emplacement)`,
+        memberUids, createdAt: serverTimestamp(),
       });
     });
   } catch (error) {
-    if (error instanceof Error && error.message.includes('Commande')) throw error;
+    if (error instanceof Error && (error.message.includes('Commande') || error.message.includes('Réservation') || error.message.includes('réservation') || error.message.includes('Solde'))) throw error;
     handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
@@ -681,25 +675,16 @@ export async function shipSalesOrder(params: {
   notes?: string;
   actor: { uid: string; email: string; displayName: string };
 }): Promise<string> {
-  const {
-    orgId,
-    memberUids,
-    order,
-    warehouse,
-    locations,
-    linesInput,
-    carrier,
-    trackingNumber,
-    notes,
-    actor,
-  } = params;
-
-  const activeLines = linesInput.filter((l) => l.deliveredQty > 0);
-  if (activeLines.length === 0) {
-    throw new Error('Saisissez au moins une quantité à expédier supérieure à 0.');
+  const { orgId, memberUids, order, warehouse, locations, linesInput, carrier, trackingNumber, notes, actor } = params;
+  const activeLines = linesInput.filter((line) => line.deliveredQty > 0);
+  if (!activeLines.length) throw new Error('Saisissez au moins une quantité à expédier supérieure à 0.');
+  const lineKeys = activeLines.map((line) => `${line.productId}_${line.locationId}`);
+  if (new Set(lineKeys).size !== lineKeys.length) throw new Error('Une seule ligne de livraison est autorisée par produit et emplacement.');
+  if (activeLines.some((line) => !Number.isFinite(line.deliveredQty) || line.deliveredQty <= 0)) {
+    throw new Error('Les quantités expédiées doivent être des nombres positifs.');
   }
 
-  const locMap = new Map(locations.map((l) => [l.id, l]));
+  const locMap = new Map(locations.map((location) => [location.id, location]));
   const deliveryId = generateSafeId('dn');
   const nowStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   const deliveryRef = `BL-${nowStr}-${deliveryId.slice(-4).toUpperCase()}`;
@@ -707,174 +692,158 @@ export async function shipSalesOrder(params: {
 
   try {
     await runTransaction(db, async (tx) => {
-      // 1. ALL READS FIRST
       const soRef = doc(db, 'organizations', orgId, 'salesOrders', order.id);
       const soSnap = await tx.get(soRef);
       if (!soSnap.exists()) throw new Error('Commande client introuvable.');
       const freshOrder = soSnap.data() as SalesOrder;
-      if (freshOrder.status === 'canceled' || freshOrder.status === 'closed') {
-        throw new Error('Impossible d’expédier une commande annulée ou clôturée.');
+      if (['canceled', 'closed', 'invoiced', 'delivered'].includes(freshOrder.status)) {
+        throw new Error('Impossible d’expédier une commande clôturée, annulée, facturée ou déjà livrée.');
       }
+      if (freshOrder.warehouseId !== warehouse.id) throw new Error('Entrepôt de livraison différent de celui de la commande.');
 
-      const balReads = await Promise.all(
-        activeLines.map(async (line) => {
-          const balId = `${line.productId}_${warehouse.id}_${line.locationId}`;
-          const balRef = doc(db, 'organizations', orgId, 'stockBalances', balId);
-          const snap = await tx.get(balRef);
-          return { line, balId, balRef, snap };
-        })
-      );
+      const balanceReads = await Promise.all(activeLines.map(async (line) => {
+        const balanceId = `${line.productId}_${warehouse.id}_${line.locationId}`;
+        const balanceRef = doc(db, 'organizations', orgId, 'stockBalances', balanceId);
+        return { line, balanceId, balanceRef, snapshot: await tx.get(balanceRef) };
+      }));
 
-      // 2. VALIDATIONS
-      const dnLines: DeliveryNoteLine[] = [];
-      const updatedOrderLines = freshOrder.lines.map((ol) => ({ ...ol }));
+      const updatedOrderLines = freshOrder.lines.map((line) => ({
+        ...line,
+        reservationAllocations: [...(line.reservationAllocations ?? [])],
+      }));
+      const deliveryLines: DeliveryNoteLine[] = [];
+      const balanceWrites: Array<{
+        ref: (typeof balanceReads)[number]['balanceRef'];
+        nextPhysical: number;
+        nextReserved: number;
+        nextAvailable: number;
+        movementId: string;
+        line: DeliveryInputLine;
+        sku: string;
+        name: string;
+        unitCost: number;
+        locationCode: string;
+      }> = [];
 
-      for (const { line, snap } of balReads) {
-        const orderLine = updatedOrderLines.find((ol) => ol.productId === line.productId);
+      for (const { line, snapshot, balanceRef } of balanceReads) {
+        const orderLine = updatedOrderLines.find((item) => item.productId === line.productId);
         if (!orderLine) throw new Error(`Produit ${line.productId} absent de la commande.`);
-
         const remaining = Math.max(0, orderLine.quantity - orderLine.deliveredQty);
-        if (line.deliveredQty > remaining + 0.0001) {
-          throw new Error(
-            `Quantité expédiée (${line.deliveredQty}) supérieure au reliquat (${remaining}) pour ${orderLine.productSku}.`
-          );
+        if (line.deliveredQty > remaining + 0.0001) throw new Error(`Quantité expédiée supérieure au reliquat pour ${orderLine.productSku}.`);
+        if (!snapshot.exists()) throw new Error(`Aucun stock trouvé pour ${orderLine.productSku}.`);
+        const balance = snapshot.data() as StockBalance;
+        const location = locMap.get(line.locationId);
+        if (!location || location.warehouseId !== warehouse.id) throw new Error('Emplacement source invalide.');
+
+        const allocation = orderLine.reservationAllocations?.find(
+          (item) => item.warehouseId === warehouse.id && item.locationId === line.locationId
+        );
+        const allocatedHere = allocation?.quantity ?? 0;
+        if (orderLine.reservedQty > 0 && !orderLine.reservationAllocations?.length) {
+          throw new Error(`Réservation historique non ventilée pour ${orderLine.productSku} : réconciliez la commande avant expédition.`);
         }
-        if (!snap.exists()) {
-          throw new Error(`Aucun stock trouvé sur cet emplacement pour ${orderLine.productSku}.`);
-        }
-        const existingBal = snap.data() as StockBalance;
-        if (existingBal.physicalQty < line.deliveredQty - 0.0001) {
-          throw new Error(
-            `Stock physique insuffisant sur ${existingBal.locationCode} pour ${orderLine.productSku} (dispo physique : ${existingBal.physicalQty}).`
-          );
+        const usable = Number((balance.availableQty + allocatedHere).toFixed(3));
+        if (line.deliveredQty > usable + 0.0001) {
+          throw new Error(`Stock disponible insuffisant sur ${location.code} pour ${orderLine.productSku} (disponible pour cette commande : ${usable}).`);
         }
 
-        const loc = locMap.get(line.locationId);
-        if (!loc) throw new Error('Emplacement source invalide.');
-
-        // Deduct from order reservation if reserved
-        const consumeReservation = Math.min(orderLine.reservedQty, line.deliveredQty);
-        orderLine.reservedQty = Number((orderLine.reservedQty - consumeReservation).toFixed(3));
+        const consumeReservation = Math.min(allocatedHere, line.deliveredQty);
+        if (allocation && consumeReservation > 0) {
+          allocation.quantity = Number((allocation.quantity - consumeReservation).toFixed(3));
+        }
+        orderLine.reservationAllocations = (orderLine.reservationAllocations ?? []).filter((item) => item.quantity > 0.0001);
+        orderLine.reservedQty = Number(Math.max(0, orderLine.reservedQty - consumeReservation).toFixed(3));
         orderLine.deliveredQty = Number((orderLine.deliveredQty + line.deliveredQty).toFixed(3));
 
-        dnLines.push({
+        const nextPhysical = Number((balance.physicalQty - line.deliveredQty).toFixed(3));
+        const nextReserved = Number((balance.reservedQty - consumeReservation).toFixed(3));
+        if (nextPhysical < nextReserved - 0.0001 || nextPhysical < -0.0001) {
+          throw new Error(`La livraison ferait passer le stock physique sous les réservations restantes pour ${orderLine.productSku}.`);
+        }
+        const movementId = generateSafeId('mvt');
+        balanceWrites.push({
+          ref: balanceRef,
+          nextPhysical: Math.max(0, nextPhysical),
+          nextReserved: Math.max(0, nextReserved),
+          nextAvailable: Number(Math.max(0, nextPhysical - nextReserved).toFixed(3)),
+          movementId,
+          line,
+          sku: orderLine.productSku,
+          name: orderLine.productName,
+          unitCost: balance.unitCost,
+          locationCode: location.code,
+        });
+        deliveryLines.push({
           productId: orderLine.productId,
           productSku: orderLine.productSku,
           productName: orderLine.productName,
-          locationId: loc.id,
-          locationCode: loc.code,
+          locationId: location.id,
+          locationCode: location.code,
           deliveredQty: line.deliveredQty,
-          unitCost: existingBal.unitCost,
+          unitCost: balance.unitCost,
         });
       }
 
-      const allDelivered = updatedOrderLines.every((ol) => ol.deliveredQty >= ol.quantity - 0.0001);
-      const anyDelivered = updatedOrderLines.some((ol) => ol.deliveredQty > 0);
-      const stillReserved = updatedOrderLines.some((ol) => ol.reservedQty > 0);
-      const nextStatus: SalesOrder['status'] = allDelivered
-        ? 'delivered'
-        : anyDelivered
-          ? 'partially_delivered'
-          : freshOrder.status;
+      const allDelivered = updatedOrderLines.every((line) => line.deliveredQty >= line.quantity - 0.0001);
+      const anyDelivered = updatedOrderLines.some((line) => line.deliveredQty > 0);
+      const stillReserved = updatedOrderLines.some((line) => line.reservedQty > 0.0001);
+      const nextStatus: SalesOrder['status'] = allDelivered ? 'delivered' : anyDelivered ? 'partially_delivered' : freshOrder.status;
 
-      // 3. ALL WRITES
       tx.set(doc(db, 'organizations', orgId, 'deliveryNotes', deliveryId), {
-        id: deliveryId,
-        orgId,
-        reference: deliveryRef,
-        salesOrderId: freshOrder.id,
-        salesOrderRef: freshOrder.reference,
-        customerId: freshOrder.customerId,
-        customerName: freshOrder.customerName,
-        warehouseId: warehouse.id,
-        warehouseName: warehouse.name,
-        carrier: carrier || '',
-        trackingNumber: trackingNumber || '',
-        notes: notes || '',
-        lines: dnLines,
-        deliveredByUid: actor.uid,
-        deliveredByName: actor.displayName,
-        memberUids,
-        createdAt: serverTimestamp(),
+        id: deliveryId, orgId, reference: deliveryRef,
+        salesOrderId: freshOrder.id, salesOrderRef: freshOrder.reference,
+        customerId: freshOrder.customerId, customerName: freshOrder.customerName,
+        warehouseId: warehouse.id, warehouseName: warehouse.name,
+        carrier: carrier || '', trackingNumber: trackingNumber || '', notes: notes || '',
+        lines: deliveryLines, deliveredByUid: actor.uid, deliveredByName: actor.displayName,
+        memberUids, createdAt: serverTimestamp(),
       });
-
       tx.update(soRef, {
-        lines: updatedOrderLines,
-        stockReserved: stillReserved,
-        status: nextStatus,
-        updatedAt: serverTimestamp(),
+        lines: updatedOrderLines, stockReserved: stillReserved,
+        status: nextStatus, updatedAt: serverTimestamp(),
       });
 
-      for (let i = 0; i < balReads.length; i++) {
-        const { balRef, snap } = balReads[i];
-        const dnLine = dnLines[i];
-        const existingBal = snap.data() as StockBalance;
-
-        const nextPhysical = Number(Math.max(0, existingBal.physicalQty - dnLine.deliveredQty).toFixed(3));
-        const releaseBalRes = Math.min(existingBal.reservedQty, dnLine.deliveredQty);
-        const nextReserved = Number(Math.max(0, existingBal.reservedQty - releaseBalRes).toFixed(3));
-        const nextAvailable = Number(Math.max(0, nextPhysical - nextReserved).toFixed(3));
-
-        tx.update(balRef, {
-          physicalQty: nextPhysical,
-          reservedQty: nextReserved,
-          availableQty: nextAvailable,
+      for (let index = 0; index < balanceWrites.length; index++) {
+        const write = balanceWrites[index];
+        const deliveryLine = deliveryLines[index];
+        tx.update(write.ref, {
+          physicalQty: write.nextPhysical,
+          reservedQty: write.nextReserved,
+          availableQty: write.nextAvailable,
+          lastMovementId: write.movementId,
           updatedAt: serverTimestamp(),
         });
-
-        const mvtId = generateSafeId('mvt');
-        tx.set(doc(db, 'organizations', orgId, 'stockMovements', mvtId), {
-          id: mvtId,
-          orgId,
-          reference: `MVT-${nowStr}-${mvtId.slice(-5).toUpperCase()}`,
+        tx.set(doc(db, 'organizations', orgId, 'stockMovements', write.movementId), {
+          id: write.movementId, orgId,
+          reference: `MVT-${nowStr}-${write.movementId.slice(-5).toUpperCase()}`,
           movementType: 'OUT',
-          productId: dnLine.productId,
-          productSku: dnLine.productSku,
-          productName: dnLine.productName,
-          warehouseId: warehouse.id,
-          warehouseName: warehouse.name,
-          locationId: dnLine.locationId,
-          locationCode: dnLine.locationCode,
-          quantity: -dnLine.deliveredQty,
-          unitCost: dnLine.unitCost,
+          productId: deliveryLine.productId, productSku: deliveryLine.productSku, productName: deliveryLine.productName,
+          warehouseId: warehouse.id, warehouseName: warehouse.name,
+          locationId: deliveryLine.locationId, locationCode: deliveryLine.locationCode,
+          quantity: -deliveryLine.deliveredQty, unitCost: deliveryLine.unitCost,
           reason: `Expédition commande ${freshOrder.reference} (${freshOrder.customerName})`,
-          sourceDocumentType: 'Bon de livraison client',
-          sourceDocumentRef: deliveryRef,
-          performedByUid: actor.uid,
-          performedByName: actor.displayName,
-          isDemo: false,
-          memberUids,
-          createdAt: serverTimestamp(),
+          sourceDocumentType: 'Bon de livraison client', sourceDocumentRef: deliveryRef,
+          performedByUid: actor.uid, performedByName: actor.displayName,
+          isDemo: false, memberUids, createdAt: serverTimestamp(),
         });
       }
 
       const logId = generateSafeId('log');
       tx.set(doc(db, 'organizations', orgId, 'auditLogs', logId), {
-        id: logId,
-        orgId,
-        actorUid: actor.uid,
-        actorEmail: actor.email,
-        action: 'DELIVERY_NOTE_SHIPPED',
-        entityType: 'delivery_note',
-        entityId: deliveryId,
+        id: logId, orgId, actorUid: actor.uid, actorEmail: actor.email,
+        action: 'DELIVERY_NOTE_SHIPPED', entityType: 'delivery_note', entityId: deliveryId,
         summary: `Bon de livraison ${deliveryRef} sur commande ${freshOrder.reference}`,
-        memberUids,
-        createdAt: serverTimestamp(),
+        memberUids, createdAt: serverTimestamp(),
       });
     });
-
     return deliveryRef;
   } catch (error) {
-    if (
-      error instanceof Error &&
-      (error.message.includes('Quantité') ||
-        error.message.includes('Stock') ||
-        error.message.includes('Aucun stock') ||
-        error.message.includes('Commande') ||
-        error.message.includes('Emplacement'))
-    ) {
-      throw error;
-    }
+    if (error instanceof Error && (
+      error.message.includes('Quantité') || error.message.includes('Stock') ||
+      error.message.includes('stock') || error.message.includes('Commande') ||
+      error.message.includes('Emplacement') || error.message.includes('Réservation') ||
+      error.message.includes('réservation') || error.message.includes('livraison')
+    )) throw error;
     handleFirestoreError(error, OperationType.WRITE, path);
   }
 }

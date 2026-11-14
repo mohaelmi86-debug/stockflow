@@ -494,9 +494,16 @@ export interface SalesLine {
   vatRate: number;
 }
 
+export interface StockReservationAllocation {
+  warehouseId: string;
+  locationId: string;
+  quantity: number;
+}
+
 export interface SalesOrderLine extends SalesLine {
   reservedQty: number;
   deliveredQty: number;
+  reservationAllocations?: StockReservationAllocation[];
 }
 
 export interface Quote {
