@@ -14,6 +14,7 @@ import {
 } from 'firebase/firestore';
 import type { User } from 'firebase/auth';
 import { db } from '../lib/firebase.ts';
+import { callStockEngine } from '../lib/stockApi.ts';
 import { handleFirestoreError, OperationType } from '../lib/firestoreError.ts';
 import { generateSafeId, slugify, toDate } from '../shared/formatters.ts';
 import type {
@@ -1029,221 +1030,21 @@ export async function recordStockMovement(params: {
   targetLocation?: WarehouseLocation;
   actor: { uid: string; email: string; displayName: string };
 }): Promise<string> {
-  const {
-    orgId,
-    memberUids,
-    input,
-    product,
-    warehouse,
-    location,
-    targetWarehouse,
-    targetLocation,
-    actor,
-  } = params;
-
-  const movementId = generateSafeId('mvt');
-  const nowStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  const reference = `MVT-${nowStr}-${movementId.slice(-5).toUpperCase()}`;
-  const sourceBalanceId = `${product.id}_${warehouse.id}_${location.id}`;
-  const qty = Math.abs(Number(input.quantity));
-  const path = `organizations/${orgId}/stockMovements/${movementId}`;
-
-  try {
-    await runTransaction(db, async (tx) => {
-      const srcBalRef = doc(db, 'organizations', orgId, 'stockBalances', sourceBalanceId);
-      const srcBalSnap = await tx.get(srcBalRef);
-      const srcData = srcBalSnap.exists() ? (srcBalSnap.data() as StockBalance) : null;
-
-      const currentPhysical = srcData?.physicalQty ?? 0;
-      const currentReserved = srcData?.reservedQty ?? 0;
-      const currentAvailable = srcData?.availableQty ?? 0;
-      const currentCost = srcData?.unitCost ?? product.purchasePrice;
-
-      let newSrcPhysical = currentPhysical;
-      let signedQty = qty;
-
-      if (input.movementType === 'IN') {
-        newSrcPhysical = currentPhysical + qty;
-        signedQty = qty;
-      } else if (input.movementType === 'OUT') {
-        if (qty > currentAvailable) {
-          throw new Error(
-            `Stock disponible insuffisant sur ${location.code} (${currentAvailable} disponible, ${qty} demandé).`
-          );
-        }
-        newSrcPhysical = currentPhysical - qty;
-        signedQty = -qty;
-      } else if (input.movementType === 'ADJUSTMENT') {
-        signedQty = Number(input.quantity);
-        newSrcPhysical = currentPhysical + signedQty;
-        if (newSrcPhysical < currentReserved) {
-          throw new Error(
-            `L'ajustement ne peut pas ramener le stock physique sous le stock réservé (${currentReserved}).`
-          );
-        }
-      } else if (input.movementType === 'TRANSFER') {
-        if (!targetWarehouse || !targetLocation) {
-          throw new Error('Entrepôt et emplacement de destination requis pour un transfert.');
-        }
-        if (warehouse.id === targetWarehouse.id && location.id === targetLocation.id) {
-          throw new Error('La destination du transfert doit être différente de la source.');
-        }
-        if (qty > currentAvailable) {
-          throw new Error(
-            `Stock disponible insuffisant pour transfert (${currentAvailable} disponible, ${qty} demandé).`
-          );
-        }
-        newSrcPhysical = currentPhysical - qty;
-        signedQty = qty;
-      }
-
-      const newSrcAvailable = Math.max(0, newSrcPhysical - currentReserved);
-      const unitCost = input.unitCost > 0 ? Number(input.unitCost) : currentCost;
-
-      if (input.movementType === 'TRANSFER' && targetWarehouse && targetLocation) {
-        const tgtBalanceId = `${product.id}_${targetWarehouse.id}_${targetLocation.id}`;
-        const tgtBalRef = doc(db, 'organizations', orgId, 'stockBalances', tgtBalanceId);
-        const tgtBalSnap = await tx.get(tgtBalRef);
-        const tgtData = tgtBalSnap.exists() ? (tgtBalSnap.data() as StockBalance) : null;
-        const newTgtPhysical = (tgtData?.physicalQty ?? 0) + qty;
-        const tgtReserved = tgtData?.reservedQty ?? 0;
-
-        const tgtPayload = {
-          id: tgtBalanceId,
-          orgId,
-          productId: product.id,
-          productSku: product.sku,
-          productName: product.name,
-          warehouseId: targetWarehouse.id,
-          warehouseName: targetWarehouse.name,
-          locationId: targetLocation.id,
-          locationCode: targetLocation.code,
-          physicalQty: newTgtPhysical,
-          reservedQty: tgtReserved,
-          onOrderQty: tgtData?.onOrderQty ?? 0,
-          inTransitQty: tgtData?.inTransitQty ?? 0,
-          availableQty: Math.max(0, newTgtPhysical - tgtReserved),
-          unitCost,
-          lastMovementId: movementId,
-          memberUids,
-          updatedAt: serverTimestamp(),
-        };
-
-        if (tgtBalSnap.exists()) {
-          tx.update(tgtBalRef, {
-            productSku: product.sku,
-            productName: product.name,
-            warehouseName: targetWarehouse.name,
-            locationCode: targetLocation.code,
-            physicalQty: newTgtPhysical,
-            availableQty: Math.max(0, newTgtPhysical - tgtReserved),
-            unitCost,
-            lastMovementId: movementId,
-            updatedAt: serverTimestamp(),
-          });
-        } else {
-          tx.set(tgtBalRef, tgtPayload);
-        }
-      }
-
-      if (srcBalSnap.exists()) {
-        tx.update(srcBalRef, {
-          productSku: product.sku,
-          productName: product.name,
-          warehouseName: warehouse.name,
-          locationCode: location.code,
-          physicalQty: newSrcPhysical,
-          availableQty: newSrcAvailable,
-          unitCost,
-          lastMovementId: movementId,
-          updatedAt: serverTimestamp(),
-        });
-      } else {
-        tx.set(srcBalRef, {
-          id: sourceBalanceId,
-          orgId,
-          productId: product.id,
-          productSku: product.sku,
-          productName: product.name,
-          warehouseId: warehouse.id,
-          warehouseName: warehouse.name,
-          locationId: location.id,
-          locationCode: location.code,
-          physicalQty: newSrcPhysical,
-          reservedQty: 0,
-          onOrderQty: 0,
-          inTransitQty: 0,
-          availableQty: newSrcAvailable,
-          unitCost,
-          lastMovementId: movementId,
-          memberUids,
-          updatedAt: serverTimestamp(),
-        });
-      }
-
-      tx.set(doc(db, 'organizations', orgId, 'stockMovements', movementId), {
-        id: movementId,
-        orgId,
-        reference,
-        movementType: input.movementType,
-        productId: product.id,
-        productSku: product.sku,
-        productName: product.name,
-        warehouseId: warehouse.id,
-        warehouseName: warehouse.name,
-        locationId: location.id,
-        locationCode: location.code,
-        ...(targetWarehouse ? { targetWarehouseId: targetWarehouse.id, targetWarehouseName: targetWarehouse.name } : {}),
-        ...(targetLocation ? { targetLocationId: targetLocation.id, targetLocationCode: targetLocation.code } : {}),
-        quantity: signedQty,
-        unitCost,
-        reason: input.reason,
-        sourceDocumentType: input.sourceDocumentType || 'Opération manuelle',
-        sourceDocumentRef: input.sourceDocumentRef || reference,
-        performedByUid: actor.uid,
-        performedByName: actor.displayName,
-        isDemo: false,
-        memberUids,
-        createdAt: serverTimestamp(),
-      });
-
-      const logId = generateSafeId('log');
-      tx.set(doc(db, 'organizations', orgId, 'auditLogs', logId), {
-        id: logId,
-        orgId,
-        actorUid: actor.uid,
-        actorEmail: actor.email,
-        action: `STOCK_${input.movementType}`,
-        entityType: 'stock_movement',
-        entityId: movementId,
-        summary: `${reference} : ${input.movementType} ${signedQty} × ${product.sku} (${warehouse.code} / ${location.code})`,
-        memberUids,
-        createdAt: serverTimestamp(),
-      });
-
-      if (newSrcAvailable <= product.minStock && input.movementType !== 'IN') {
-        const notifId = generateSafeId('notif');
-        tx.set(doc(db, 'organizations', orgId, 'notifications', notifId), {
-          id: notifId,
-          orgId,
-          title: newSrcAvailable === 0 ? 'Rupture de stock' : 'Seuil minimum atteint',
-          message: `${product.name} (${product.sku}) : ${newSrcAvailable} ${product.unit} disponible sur ${warehouse.name}.`,
-          severity: newSrcAvailable === 0 ? 'error' : 'warning',
-          isRead: false,
-          link: '/stocks',
-          memberUids,
-          createdAt: serverTimestamp(),
-        });
-      }
-    });
-
-    return reference;
-  } catch (error) {
-    if (error instanceof Error && (error.message.includes('insuffisant') || error.message.includes('destination') || error.message.includes('réservé'))) {
-      throw error;
-    }
-    handleFirestoreError(error, OperationType.WRITE, path);
-  }
+  const result = await callStockEngine<{ reference: string }>('movement', {
+    orgId: params.orgId,
+    productId: params.product.id,
+    warehouseId: params.warehouse.id,
+    locationId: params.location.id,
+    movementType: params.input.movementType,
+    quantity: params.input.quantity,
+    unitCost: params.input.unitCost,
+    reason: params.input.reason,
+    sourceDocumentType: params.input.sourceDocumentType ?? 'Opération manuelle',
+    sourceDocumentRef: params.input.sourceDocumentRef ?? '',
+    targetWarehouseId: params.targetWarehouse?.id ?? params.input.targetWarehouseId ?? '',
+    targetLocationId: params.targetLocation?.id ?? params.input.targetLocationId ?? '',
+  });
+  return result.reference;
 }
 
 export async function markNotificationRead(orgId: string, notificationId: string): Promise<void> {
