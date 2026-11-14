@@ -589,6 +589,9 @@ export async function createSalesInvoice(params: {
     const invoiceNumber = await runTransaction(db, async (tx) => {
       const counterRef = doc(db, 'organizations', orgId, 'invoiceCounters', counterId);
       const counterSnap = await tx.get(counterRef);
+      const linkedOrderRef = linkedOrder ? doc(db, 'organizations', orgId, 'salesOrders', linkedOrder.id) : null;
+      const linkedOrderSnap = linkedOrderRef ? await tx.get(linkedOrderRef) : null;
+      if (linkedOrder && !linkedOrderSnap?.exists()) throw new Error('Commande client liée à la facture introuvable.');
       const sequenceNumber = counterSnap.exists()
         ? Number(counterSnap.data().sequenceNumber || 0) + 1
         : legacySequence + 1;
@@ -620,13 +623,15 @@ export async function createSalesInvoice(params: {
         isDemo: false, memberUids, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
       });
 
-      if (
-        linkedOrder && input.invoiceType === 'invoice' &&
-        ['delivered', 'partially_delivered', 'confirmed'].includes(linkedOrder.status)
-      ) {
-        tx.update(doc(db, 'organizations', orgId, 'salesOrders', linkedOrder.id), {
-          status: 'invoiced', updatedAt: serverTimestamp(),
-        });
+      if (linkedOrderSnap?.exists() && linkedOrderSnap.data()?.status === 'delivered' && input.invoiceType === 'invoice') {
+        const currentOrder = linkedOrderSnap.data()!;
+        const allUnitsDelivered = Array.isArray(currentOrder.lines) && currentOrder.lines.every(
+          (line: any) => Number(line.deliveredQty ?? 0) >= Number(line.quantity) - 0.0001
+            && Number(line.reservedQty ?? 0) <= 0.0001,
+        );
+        if (allUnitsDelivered) {
+          tx.update(linkedOrderRef!, { status: 'invoiced', updatedAt: serverTimestamp() });
+        }
       }
 
       const logId = generateSafeId('log');
