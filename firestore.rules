@@ -264,7 +264,9 @@ service cloud.firestore {
         && data.reservedQty is number && data.reservedQty >= 0
         && data.onOrderQty is number && data.onOrderQty >= 0
         && data.inTransitQty is number && data.inTransitQty >= 0
-        && data.availableQty is number && data.availableQty == (data.physicalQty > data.reservedQty ? data.physicalQty - data.reservedQty : 0)
+        && data.availableQty is number
+        && data.availableQty <= data.physicalQty - data.reservedQty + 0.001
+        && data.availableQty >= data.physicalQty - data.reservedQty - 0.001
         && data.reservedQty <= data.physicalQty
         && data.unitCost is number && data.unitCost >= 0
         && (!('lastMovementId' in data) || isValidId(data.lastMovementId))

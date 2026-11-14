@@ -114,7 +114,18 @@ billingRouter.post('/checkout-session', requireAuth, async (req: AuthRequest, re
   const authorizedOrg = await getOrgForAdmin(orgId, req.user!.uid);
   if (!authorizedOrg) return res.status(403).json({ error: 'Droits administrateur requis pour cette organisation.' });
   if (planCode === 'starter') {
-    return res.status(409).json({ error: 'Pour revenir au plan Starter, résiliez d’abord l’abonnement actif depuis le portail Stripe.' });
+    if (authorizedOrg.data.stripeSubscriptionId) {
+      return res.status(409).json({ error: 'Résiliez d’abord l’abonnement actif depuis le portail Stripe. Le plan Starter sera appliqué par le webhook après confirmation de la résiliation.' });
+    }
+    await applyOrganizationPlan({
+      orgId,
+      planCode: 'starter',
+      billingCycle,
+      subscriptionStatus: 'active',
+      actorUid: req.user!.uid,
+      summary: 'Retour au plan Starter gratuit.',
+    });
+    return res.json({ mode: 'free', planCode: 'starter' });
   }
   const secretKey = getStripeSecretKey();
   if (!secretKey) return res.status(503).json({ error: 'Souscription indisponible : Stripe n’est pas configuré sur le serveur.' });

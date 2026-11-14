@@ -348,11 +348,16 @@ export function SettingsPage() {
         headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ orgId: activeOrg.id, planCode: targetPlan, billingCycle }),
       });
-      const data = await res.json() as { mode?: 'stripe'; checkoutUrl?: string; error?: string };
+      const data = await res.json() as { mode?: 'stripe' | 'free'; checkoutUrl?: string; error?: string };
       if (!res.ok) throw new Error(data.error || 'Souscription impossible.');
-      if (!data.checkoutUrl) throw new Error('Stripe n’a pas retourné de lien de paiement.');
-      setCheckoutPendingUrl(data.checkoutUrl);
-      toast({ variant: 'info', title: 'Session Stripe prête', description: 'Finalisez le paiement sur Stripe. Le plan sera activé après confirmation serveur.' });
+      if (data.mode === 'free') {
+        await Promise.all([refreshWorkspace(), invalidateAll()]);
+        toast({ variant: 'success', title: 'Plan Starter activé', description: 'Le changement a été confirmé côté serveur.' });
+      } else {
+        if (!data.checkoutUrl) throw new Error('Stripe n’a pas retourné de lien de paiement.');
+        setCheckoutPendingUrl(data.checkoutUrl);
+        toast({ variant: 'info', title: 'Session Stripe prête', description: 'Finalisez le paiement sur Stripe. Le plan sera activé après confirmation serveur.' });
+      }
     } catch (err) {
       toast({ variant: 'error', title: 'Facturation impossible', description: err instanceof Error ? err.message : 'Erreur Stripe.' });
     } finally {
@@ -1141,7 +1146,7 @@ export function SettingsPage() {
               {
                 title: 'Isolation stricte par locataire (Multi-Tenant)',
                 detail:
-                  'Toutes les collections sont imbriquées sous organizations/{orgId} et vérifiées par règles Firestore via memberUids et rôle actif.',
+                  'Les lectures des collections d’organisation sont vérifiées par les règles Firestore à partir de l’adhésion active et du rôle.',
               },
               {
                 title: 'Intégrité transactionnelle des stocks',

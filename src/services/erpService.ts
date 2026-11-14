@@ -1155,6 +1155,7 @@ export async function recordStockMovement(params: {
           physicalQty: newSrcPhysical,
           availableQty: newSrcAvailable,
           unitCost,
+          lastMovementId: movementId,
           updatedAt: serverTimestamp(),
         });
       } else {
