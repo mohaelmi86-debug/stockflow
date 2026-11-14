@@ -3,6 +3,8 @@ import {
   deleteDoc,
   doc,
   getDocs,
+  limit,
+  orderBy,
   query,
   runTransaction,
   serverTimestamp,
@@ -910,9 +912,25 @@ export async function createSalesInvoice(params: {
     const invoiceNumber = await runTransaction(db, async (tx) => {
       const counterRef = doc(db, 'organizations', orgId, 'invoiceCounters', counterId);
       const counterSnap = await tx.get(counterRef);
-      const sequenceNumber = counterSnap.exists()
-        ? Number(counterSnap.data().sequenceNumber || 0) + 1
-        : 1;
+      let sequenceNumber: number;
+      if (counterSnap.exists()) {
+        sequenceNumber = Number(counterSnap.data().sequenceNumber || 0) + 1;
+      } else {
+        // Seed the first transactional counter from the latest legacy invoice
+        // to avoid reusing a number after deploying this counter mechanism.
+        const invoicePrefix = `${prefix}-${issueYear}-`;
+        const latestInvoiceQuery = query(
+          collection(db, 'organizations', orgId, 'salesInvoices'),
+          where('invoiceNumber', '>=', invoicePrefix),
+          where('invoiceNumber', '<=', `${invoicePrefix}\uf8ff`),
+          orderBy('invoiceNumber', 'desc'),
+          limit(1)
+        );
+        const latestInvoiceSnap = await tx.get(latestInvoiceQuery);
+        sequenceNumber = latestInvoiceSnap.empty
+          ? 1
+          : Number(latestInvoiceSnap.docs[0].data().sequenceNumber || 0) + 1;
+      }
       const nextInvoiceNumber = `${prefix}-${issueYear}-${String(sequenceNumber).padStart(5, '0')}`;
 
       tx.set(counterRef, {

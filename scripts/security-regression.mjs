@@ -44,6 +44,8 @@ assert.ok(sales.includes('reservationAllocations') && sales.includes('runTransac
   'Reservation and shipping workflows must use per-location transaction logic.');
 assert.ok(sales.includes('invoiceCounters') && sales.includes('runTransaction'),
   'Invoice sequence allocation must be transactional.');
+assert.ok(sales.includes('latestInvoiceQuery') && sales.includes('orderBy(\'invoiceNumber\', \'desc\')'),
+  'First invoice counter must seed itself from existing invoice history.');
 assert.ok(sales.includes('Facture cible introuvable') && sales.includes('paidAmount'),
   'Payment workflow must read and validate the current invoice in a transaction.');
 assert.ok(erp.includes('lastMovementId: movementId') && purchasing.includes('lastMovementId: mvtId'),
