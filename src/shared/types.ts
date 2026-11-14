@@ -203,6 +203,7 @@ export interface StockBalance {
   inTransitQty: number;
   availableQty: number;
   unitCost: number;
+  lastMovementId?: string;
   memberUids: string[];
   updatedAt: unknown;
 }
