@@ -44,6 +44,9 @@ jobs:
       - name: Historical stock reconciliation planner tests
         run: bun run test:reconciliation-planner
 
+      - name: Stock engine invariant tests
+        run: bun run test:stock-engine
+
       - name: Firestore Emulator rules tests
         run: ./node_modules/.bin/firebase emulators:exec --only firestore --project demo-stockflow "bun run test:firestore-rules"
 
