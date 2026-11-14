@@ -90,7 +90,8 @@ function auditPayload(orgId: string, actor: Actor, action: string, entityType: s
 
 function assertBalanceCoherent(balance: DocumentData) {
   const expected = computeAvailableQuantity(balance.physicalQty, balance.reservedQty);
-  if (Math.abs(Number(balance.availableQty) - expected) > 0.001) {
+  const available = Number(balance.availableQty);
+  if (!Number.isFinite(available) || Math.abs(available - expected) > 0.001) {
     throw new Error(`Solde incohérent pour ${balance.productSku ?? balance.productId} : disponible enregistré différent du stock physique moins réservations. Une réconciliation est nécessaire.`);
   }
   return expected;
@@ -131,7 +132,16 @@ router.post('/reserve', wrap(async (req, res) => {
     if (!Array.isArray(order.lines) || !order.lines.length) throw new Error('La commande ne contient aucune ligne.');
     assertUniqueProductLines(order.lines, 'Commande client');
     const lines = order.lines.map((line: any) => ({ ...line, reservationAllocations: [...(line.reservationAllocations ?? [])] }));
-    for (const line of lines) assertReservationConsistency(line);
+    for (const line of lines) {
+      const allocations = assertReservationConsistency(line);
+      if (allocations.some((allocation) => allocation.warehouseId !== order.warehouseId)) {
+        throw new Error(`Allocation de réservation hors de l'entrepôt de la commande pour ${line.productSku}.`);
+      }
+      const unshipped = Math.max(0, Number(line.quantity) - Number(line.deliveredQty ?? 0));
+      if (Number(line.reservedQty ?? 0) > unshipped + 0.0001) {
+        throw new Error(`Réservation supérieure au reliquat de ${line.productSku}.`);
+      }
+    }
 
     const reads = new Map<string, QueryDocumentSnapshot[]>();
     for (const productId of [...new Set(lines.map((line: any) => line.productId))]) {
@@ -185,7 +195,7 @@ router.post('/reserve', wrap(async (req, res) => {
     const stockReserved = lines.some((line: any) => Number(line.reservedQty) > 0);
     tx.update(orderRef, {
       lines, stockReserved,
-      status: order.status === 'draft' ? 'confirmed' : 'preparing',
+      status: order.status === 'draft' ? 'confirmed' : order.status === 'confirmed' ? 'preparing' : order.status,
       updatedAt: FieldValue.serverTimestamp(),
     });
     const log = auditPayload(orgId, actor, 'SALES_ORDER_STOCK_RESERVED', 'sales_order', orderId,
@@ -216,6 +226,7 @@ router.post('/cancel', wrap(async (req, res) => {
     const grouped = new Map<string, { productId: string; warehouseId: string; locationId: string; quantity: number }>();
     for (const line of order.lines) {
       const allocations = assertReservationConsistency(line);
+      if (allocations.some((allocation) => allocation.warehouseId !== order.warehouseId)) throw new Error('Une allocation de réservation ne correspond pas à l’entrepôt de la commande.');
       for (const allocation of allocations) {
         const key = `${line.productId}_${allocation.warehouseId}_${allocation.locationId}`;
         const current = grouped.get(key);
@@ -321,10 +332,16 @@ router.post('/ship', wrap(async (req, res) => {
       const usable = Number(balance.availableQty) + allocatedHere;
       if (deliveredQty > usable + 0.0001) throw new Error(`Stock insuffisant sur ${location!.code} pour ${orderLine.productSku}.`);
       const consumeReservation = Math.min(allocatedHere, deliveredQty);
+      const nextLineReserved = roundStock(Number(orderLine.reservedQty ?? 0) - consumeReservation);
+      const nextLineDelivered = roundStock(Number(orderLine.deliveredQty ?? 0) + deliveredQty);
+      const remainingAfterDelivery = Math.max(0, Number(orderLine.quantity) - nextLineDelivered);
+      if (nextLineReserved > remainingAfterDelivery + 0.0001) {
+        throw new Error(`Cette expédition laisserait une réservation excédentaire pour ${orderLine.productSku}. Expédiez depuis un emplacement alloué ou libérez d'abord la réservation excédentaire.`);
+      }
       if (allocation) allocation.quantity = roundStock(allocation.quantity - consumeReservation);
       orderLine.reservationAllocations = orderLine.reservationAllocations.filter((item: any) => item.quantity > 0.0001);
-      orderLine.reservedQty = roundStock(Number(orderLine.reservedQty ?? 0) - consumeReservation);
-      orderLine.deliveredQty = roundStock(Number(orderLine.deliveredQty ?? 0) + deliveredQty);
+      orderLine.reservedQty = nextLineReserved;
+      orderLine.deliveredQty = nextLineDelivered;
       const nextPhysical = roundStock(Number(balance.physicalQty) - deliveredQty);
       const nextReserved = roundStock(Number(balance.reservedQty) - consumeReservation);
       if (nextPhysical < nextReserved - 0.0001 || nextPhysical < -0.0001) throw new Error('La livraison ferait passer le stock sous les réservations restantes.');
@@ -452,7 +469,7 @@ router.post('/receipt', wrap(async (req, res) => {
       const existing = balanceSnaps[i].data();
       if (existing) assertBalanceCoherent(existing);
       const product = productSnap.data()!;
-      const unitCost = roundStock(Number(orderLine.unitPrice) * (1 - Number(orderLine.discountPct ?? 0) / 100));
+      const unitCost = Number((Number(orderLine.unitPrice) * (1 - Number(orderLine.discountPct ?? 0) / 100)).toFixed(4));
       orderLine.receivedQty = roundStock(Number(orderLine.receivedQty ?? 0) + input.acceptedQty);
       receiptLines.push({
         productId: product.id, productSku: product.sku, productName: product.name,
