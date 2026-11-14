@@ -110,6 +110,7 @@ async function seed() {
       await setDoc(doc(db, 'organizations', data.orgId, 'members', data.uid), data);
     }
     await setDoc(doc(db, 'organizations', 'org_alpha', 'stockBalances', 'product_1_warehouse_1_location_1'), balance());
+    await setDoc(doc(db, 'organizations', 'org_alpha', 'stockMovements', 'movement_in_001'), movement('operator_alpha', 'movement_in_001'));
     await setDoc(doc(db, 'users', 'viewer_alpha'), {
       uid: 'viewer_alpha',
       email: 'viewer_alpha@example.test',
@@ -229,31 +230,29 @@ try {
     }));
   });
 
-  await check('operators cannot change physical stock without a movement', async () => {
+  await check('clients cannot modify physical or reserved stock directly', async () => {
     await assertFails(updateDoc(doc(dbFor('operator_alpha'), 'organizations', 'org_alpha', 'stockBalances', 'product_1_warehouse_1_location_1'), {
-      physicalQty: 11,
-      availableQty: 11,
+      reservedQty: 2,
+      availableQty: 8,
       updatedAt: serverTimestamp(),
     }));
   });
 
-  await check('orphan stock movements without a matching balance update are denied', async () => {
+  await check('clients cannot create stock movements directly', async () => {
     await assertFails(setDoc(doc(dbFor('operator_alpha'), 'organizations', 'org_alpha', 'stockMovements', 'movement_orphan_1'), movement('operator_alpha')));
   });
 
-  await check('stock balance and immutable movement must be committed together', async () => {
+  await check('clients cannot mutate stock even with a paired movement', async () => {
     const db = dbFor('operator_alpha');
-    const balanceRef = doc(db, 'organizations', 'org_alpha', 'stockBalances', 'product_1_warehouse_1_location_1');
-    const movementRef = doc(db, 'organizations', 'org_alpha', 'stockMovements', 'movement_in_001');
-    await assertSucceeds(runTransaction(db, async (transaction) => {
-      transaction.set(movementRef, movement('operator_alpha', 'movement_in_001'));
-      transaction.update(balanceRef, {
-        physicalQty: 12,
-        availableQty: 12,
-        lastMovementId: 'movement_in_001',
-        updatedAt: serverTimestamp(),
-      });
-    }));
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'organizations', 'org_alpha', 'stockMovements', 'movement_in_002'), movement('operator_alpha', 'movement_in_002'));
+    batch.update(doc(db, 'organizations', 'org_alpha', 'stockBalances', 'product_1_warehouse_1_location_1'), {
+      physicalQty: 12,
+      availableQty: 12,
+      lastMovementId: 'movement_in_002',
+      updatedAt: serverTimestamp(),
+    });
+    await assertFails(batch.commit());
   });
 
   await check('stock movement ledger entries are immutable', async () => {
