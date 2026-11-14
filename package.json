@@ -13,7 +13,8 @@
     "test:security": "node scripts/security-regression.mjs",
     "test:firestore-rules": "node scripts/firestore-rules.test.mjs",
     "audit:stock-history": "node scripts/reconcile-stock-reservations.mjs",
-    "test:reconciliation-planner": "node scripts/reconcile-stock-reservations.test.mjs"
+    "test:reconciliation-planner": "node scripts/reconcile-stock-reservations.test.mjs",
+    "test:stock-engine": "tsx scripts/stock-engine.test.ts"
   },
   "dependencies": {
     "@firebase/eslint-plugin-security-rules": "^0.0.2",
