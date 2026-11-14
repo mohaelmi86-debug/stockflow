@@ -1,6 +1,6 @@
 import { auth } from './firebase.ts';
 
-export async function callStockEngine<T extends Record<string, unknown> = Record<string, unknown>>(
+export async function callStockEngine<T = Record<string, unknown>>(
   operation: 'reserve' | 'cancel' | 'ship' | 'receipt' | 'movement',
   payload: Record<string, unknown>,
 ): Promise<T> {
