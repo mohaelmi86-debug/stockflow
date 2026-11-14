@@ -373,11 +373,16 @@ router.post('/receipt', wrap(async (req, res) => {
   if (!['passed', 'partial_issue', 'rejected'].includes(String(inspectionStatus))) throw new Error('Statut de contrôle qualité invalide.');
   if (!Array.isArray(linesInput) || !linesInput.length) throw new Error('Aucune ligne de réception.');
   assertUniqueProductLines(linesInput, 'Réception fournisseur');
-  const normalized = linesInput.filter((line: any) => Number(line.receivedQty) > 0).map((line: any) => ({
-    productId: text(line.productId, 'Produit'),
-    locationId: text(line.locationId, 'Emplacement'),
-    ...validateReceiptQuantities(line, inspectionStatus),
-  }));
+  const normalized = linesInput.map((line: any) => {
+    const receivedQty = quantity(line.receivedQty, 'Quantité reçue');
+    if (receivedQty < 0) throw new Error('La quantité reçue ne peut pas être négative.');
+    if (receivedQty === 0) return null;
+    return {
+      productId: text(line.productId, 'Produit'),
+      locationId: text(line.locationId, 'Emplacement'),
+      ...validateReceiptQuantities(line, inspectionStatus),
+    };
+  }).filter(Boolean) as Array<{ productId: string; locationId: string; receivedQty: number; acceptedQty: number; rejectedQty: number }>;
   if (!normalized.length) throw new Error('Saisissez au moins une quantité reçue.');
   const { org } = await authorizeOrg(orgId, actor);
   const memberUids = Array.isArray(org.memberUids) ? org.memberUids.slice(0, 50) : [actor.uid];
@@ -473,7 +478,6 @@ router.post('/receipt', wrap(async (req, res) => {
     });
     tx.update(orderRef, { lines: updatedOrderLines, status: nextStatus, updatedAt: FieldValue.serverTimestamp() });
     for (const write of stockWrites) {
-      if (await tx.get(write.balanceRef) as any) { /* balance was read above; writes below use upsert */ }
       tx.set(write.balanceRef, write.balanceData, { merge: true });
       tx.create(write.movementRef, write.movementData);
     }
@@ -506,6 +510,7 @@ router.post('/movement', wrap(async (req, res) => {
   const memberUids = Array.isArray(org.memberUids) ? org.memberUids.slice(0, 50) : [actor.uid];
   const movementId = id('mvt');
   const movementRef = adminDb.doc(`organizations/${orgId}/stockMovements/${movementId}`);
+  const movementReference = `MVT-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${movementId.slice(-5).toUpperCase()}`;
 
   await adminDb.runTransaction(async (tx) => {
     const productRef = adminDb.doc(`organizations/${orgId}/products/${productId}`);
@@ -583,7 +588,7 @@ router.post('/movement', wrap(async (req, res) => {
     tx.set(sourceRef, sourceData, { merge: true });
     tx.create(movementRef, {
       id: movementId,
-      orgId, reference: `MVT-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${movementId.slice(-5).toUpperCase()}`,
+      orgId, reference: movementReference,
       movementType, productId, productSku: product.sku, productName: product.name,
       warehouseId, warehouseName: warehouse.name, locationId, locationCode: location.code,
       ...(target ? { targetWarehouseId, targetWarehouseName: target.warehouseName, targetLocationId, targetLocationCode: target.locationCode } : {}),
@@ -607,7 +612,7 @@ router.post('/movement', wrap(async (req, res) => {
       });
     }
   });
-  res.json({ ok: true, reference: movementId });
+  res.json({ ok: true, reference: movementReference });
 }));
 
 export const stockOperationsRouter = router;
