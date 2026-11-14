@@ -158,6 +158,20 @@ router.post('/reserve', wrap(async (req, res) => {
         balances.set(snap.id, { ref: snap.ref, data, add: 0 });
       }
     }
+    const existingAllocationByBalance = new Map<string, number>();
+    for (const line of lines) {
+      for (const allocation of line.reservationAllocations ?? []) {
+        if (allocation.warehouseId !== order.warehouseId) throw new Error('Une allocation de réservation ne correspond pas à l’entrepôt de la commande.');
+        const key = `${line.productId}_${allocation.warehouseId}_${allocation.locationId}`;
+        existingAllocationByBalance.set(key, roundStock((existingAllocationByBalance.get(key) ?? 0) + Number(allocation.quantity)));
+      }
+    }
+    for (const [balanceId, allocationQty] of existingAllocationByBalance) {
+      const entry = balances.get(balanceId);
+      if (!entry || Number(entry.data.reservedQty) + 0.0001 < allocationQty) {
+        throw new Error(`Les allocations historiques ne sont pas couvertes par le solde réservé ${balanceId}; réconciliation nécessaire.`);
+      }
+    }
 
     for (const line of lines) {
       const needed = Math.max(0, quantity(line.quantity, 'Quantité commandée') - quantity(line.deliveredQty ?? 0, 'Quantité livrée') - quantity(line.reservedQty ?? 0, 'Quantité réservée'));
@@ -329,6 +343,9 @@ router.post('/ship', wrap(async (req, res) => {
       if (deliveredQty > remaining + 0.0001) throw new Error(`Quantité expédiée supérieure au reliquat pour ${orderLine.productSku}.`);
       const allocation = orderLine.reservationAllocations.find((item: any) => item.warehouseId === warehouseId && item.locationId === input.locationId);
       const allocatedHere = Number(allocation?.quantity ?? 0);
+      if (Number(balance.reservedQty) + 0.0001 < allocatedHere) {
+        throw new Error(`Les réservations du solde ne couvrent pas l’allocation de ${orderLine.productSku} sur ${location!.code}; réconciliation nécessaire.`);
+      }
       const usable = Number(balance.availableQty) + allocatedHere;
       if (deliveredQty > usable + 0.0001) throw new Error(`Stock insuffisant sur ${location!.code} pour ${orderLine.productSku}.`);
       const consumeReservation = Math.min(allocatedHere, deliveredQty);
