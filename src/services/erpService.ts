@@ -223,6 +223,10 @@ export async function createOrganizationWorkspace(
     handleFirestoreError(error, OperationType.WRITE, `organizations/${orgId}/seed`);
   }
 
+  if (input.seedDemo) {
+    await callStockEngine('demo-seed', { orgId });
+  }
+
   return orgId;
 }
 
@@ -459,55 +463,6 @@ function seedDemoCatalogIntoBatch(
       updatedAt: serverTimestamp(),
     });
 
-    const balId = `${p.id}_${p.whId}_${p.locId}`;
-    const initialMovementId = p.qty > 0 ? `mvt_init_${p.id}` : undefined;
-    batch.set(doc(db, 'organizations', orgId, 'stockBalances', balId), {
-      id: balId,
-      orgId,
-      productId: p.id,
-      productSku: p.sku,
-      productName: p.name,
-      warehouseId: p.whId,
-      warehouseName: p.whName,
-      locationId: p.locId,
-      locationCode: p.locCode,
-      physicalQty: p.qty,
-      reservedQty: p.qty > 10 ? 4 : 0,
-      onOrderQty: p.qty <= p.minStock ? 25 : 0,
-      inTransitQty: 0,
-      availableQty: p.qty > 10 ? p.qty - 4 : p.qty,
-      unitCost: p.purchasePrice,
-      ...(initialMovementId ? { lastMovementId: initialMovementId } : {}),
-      memberUids,
-      updatedAt: serverTimestamp(),
-    });
-
-    if (p.qty > 0) {
-      const mvtId = initialMovementId!;
-      batch.set(doc(db, 'organizations', orgId, 'stockMovements', mvtId), {
-        id: mvtId,
-        orgId,
-        reference: `MVT-DEMO-${p.sku}`,
-        movementType: 'IN',
-        productId: p.id,
-        productSku: p.sku,
-        productName: p.name,
-        warehouseId: p.whId,
-        warehouseName: p.whName,
-        locationId: p.locId,
-        locationCode: p.locCode,
-        quantity: p.qty,
-        unitCost: p.purchasePrice,
-        reason: 'Stock initial de démonstration (traçabilité phase 1)',
-        sourceDocumentType: 'Initialisation Démo',
-        sourceDocumentRef: 'INIT-DEMO-01',
-        performedByUid: uid,
-        performedByName: displayName,
-        isDemo: true,
-        memberUids,
-        createdAt: serverTimestamp(),
-      });
-    }
   }
 
   batch.set(doc(db, 'organizations', orgId, 'notifications', 'notif_rupture_demo'), {
