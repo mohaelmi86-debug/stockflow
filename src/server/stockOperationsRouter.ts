@@ -1,5 +1,5 @@
 import { Router, type Response } from 'express';
-import { FieldValue } from 'firebase-admin/firestore';
+import { FieldValue, type DocumentReference, type QueryDocumentSnapshot } from 'firebase-admin/firestore';
 import { randomUUID } from 'node:crypto';
 import { requireAuth, type AuthRequest } from './authMiddleware.ts';
 import { adminDb } from './firebaseAdmin.ts';
@@ -114,14 +114,14 @@ router.post('/reserve', wrap(async (req, res) => {
     const lines = order.lines.map((line: any) => ({ ...line, reservationAllocations: [...(line.reservationAllocations ?? [])] }));
     for (const line of lines) assertReservationConsistency(line);
 
-    const reads = new Map<string, FirebaseFirestore.QueryDocumentSnapshot[]>();
+    const reads = new Map<string, QueryDocumentSnapshot[]>();
     for (const productId of [...new Set(lines.map((line: any) => line.productId))]) {
       const snapshot = await tx.get(adminDb.collection(`organizations/${orgId}/stockBalances`)
         .where('productId', '==', productId).where('warehouseId', '==', order.warehouseId));
       reads.set(productId, snapshot.docs);
     }
 
-    const balances = new Map<string, { ref: FirebaseFirestore.DocumentReference; data: FirebaseFirestore.DocumentData; add: number }>();
+    const balances = new Map<string, { ref: DocumentReference; data: FirebaseFirestore.DocumentData; add: number }>();
     for (const docs of reads.values()) {
       for (const snap of docs) {
         const data = snap.data();
