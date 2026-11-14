@@ -206,8 +206,6 @@ router.post('/cancel', wrap(async (req, res) => {
 
   await adminDb.runTransaction(async (tx) => {
     await assertMemberInTransaction(tx, orgId, actor);
-    await assertMemberInTransaction(tx, orgId, actor);
-    await assertMemberInTransaction(tx, orgId, actor);
     const orderSnap = await tx.get(orderRef);
     if (!orderSnap.exists) throw new Error('Commande client introuvable.');
     const order = orderSnap.data()!;
@@ -280,6 +278,7 @@ router.post('/ship', wrap(async (req, res) => {
   const noteRef = adminDb.doc(`organizations/${orgId}/deliveryNotes/${deliveryId}`);
 
   await adminDb.runTransaction(async (tx) => {
+    await assertMemberInTransaction(tx, orgId, actor);
     const [orderSnap, warehouseSnap] = await Promise.all([tx.get(orderRef), tx.get(warehouseRef)]);
     if (!orderSnap.exists) throw new Error('Commande client introuvable.');
     if (!warehouseSnap.exists || warehouseSnap.data()!.status !== 'active') throw new Error('Entrepôt de livraison invalide.');
@@ -417,6 +416,7 @@ router.post('/receipt', wrap(async (req, res) => {
   const receiptRef = `BR-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${receiptId.slice(-4).toUpperCase()}`;
 
   await adminDb.runTransaction(async (tx) => {
+    await assertMemberInTransaction(tx, orgId, actor);
     const [orderSnap, warehouseSnap] = await Promise.all([tx.get(orderRef), tx.get(warehouseRef)]);
     if (!orderSnap.exists) throw new Error('Commande fournisseur introuvable.');
     if (!warehouseSnap.exists || warehouseSnap.data()!.status !== 'active') throw new Error('Entrepôt de réception invalide.');
