@@ -37,6 +37,8 @@ assert.ok(rules.includes('match /invoiceCounters/{counterId}') && rules.includes
 
 assert.ok(billing.includes('getOrgForAdmin(orgId, req.user!.uid)'),
   'Billing endpoints must verify active owner/admin membership on the server.');
+assert.ok(billing.includes("users/${uid}/memberships/${params.orgId}") && billing.includes("batch.update(membershipRefs[index], { plan: params.planCode })"),
+  'Server-side subscription changes must synchronize user membership plan mirrors.');
 assert.ok(billing.includes('STRIPE_SECRET_KEY') && billing.includes('status(503)'),
   'Paid checkout must fail closed when Stripe is not configured.');
 assert.ok(billing.includes('verifyStripeSignature') && billing.includes('stripeWebhookEvents'),

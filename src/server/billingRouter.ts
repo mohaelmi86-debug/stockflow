@@ -72,6 +72,8 @@ async function applyOrganizationPlan(params: {
   if (!snapshot.exists) throw new Error('Organisation introuvable.');
   const org = snapshot.data()!;
   const memberUids = Array.isArray(org.memberUids) ? org.memberUids : [];
+  const membershipRefs = memberUids.map((uid: string) => adminDb.doc(`users/${uid}/memberships/${params.orgId}`));
+  const membershipSnapshots = await Promise.all(membershipRefs.map((ref) => ref.get()));
   const batch = adminDb.batch();
   batch.update(orgRef, {
     plan: params.planCode,
@@ -81,6 +83,9 @@ async function applyOrganizationPlan(params: {
     ...(params.stripeSubscriptionId ? { stripeSubscriptionId: params.stripeSubscriptionId } : {}),
     planUpdatedAt: new Date(),
     updatedAt: new Date(),
+  });
+  membershipSnapshots.forEach((membership, index) => {
+    if (membership.exists) batch.update(membershipRefs[index], { plan: params.planCode });
   });
   const logId = `billing_${crypto.randomUUID().replace(/-/g, '')}`;
   batch.set(orgRef.collection('auditLogs').doc(logId), {
