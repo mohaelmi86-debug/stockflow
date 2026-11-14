@@ -909,28 +909,27 @@ export async function createSalesInvoice(params: {
   const counterId = `sequence_${issueYear}_${input.invoiceType}`;
 
   try {
+    // Seed the first counter from the latest legacy invoice once. The actual
+    // allocation remains serialized by the counter document transaction.
+    const invoicePrefix = `${prefix}-${issueYear}-`;
+    const latestInvoiceQuery = query(
+      collection(db, 'organizations', orgId, 'salesInvoices'),
+      where('invoiceNumber', '>=', invoicePrefix),
+      where('invoiceNumber', '<=', `${invoicePrefix}\uf8ff`),
+      orderBy('invoiceNumber', 'desc'),
+      limit(1)
+    );
+    const latestInvoiceSnap = await getDocs(latestInvoiceQuery);
+    const legacySequence = latestInvoiceSnap.empty
+      ? 0
+      : Number(latestInvoiceSnap.docs[0].data().sequenceNumber || 0);
+
     const invoiceNumber = await runTransaction(db, async (tx) => {
       const counterRef = doc(db, 'organizations', orgId, 'invoiceCounters', counterId);
       const counterSnap = await tx.get(counterRef);
-      let sequenceNumber: number;
-      if (counterSnap.exists()) {
-        sequenceNumber = Number(counterSnap.data().sequenceNumber || 0) + 1;
-      } else {
-        // Seed the first transactional counter from the latest legacy invoice
-        // to avoid reusing a number after deploying this counter mechanism.
-        const invoicePrefix = `${prefix}-${issueYear}-`;
-        const latestInvoiceQuery = query(
-          collection(db, 'organizations', orgId, 'salesInvoices'),
-          where('invoiceNumber', '>=', invoicePrefix),
-          where('invoiceNumber', '<=', `${invoicePrefix}\uf8ff`),
-          orderBy('invoiceNumber', 'desc'),
-          limit(1)
-        );
-        const latestInvoiceSnap = await tx.get(latestInvoiceQuery);
-        sequenceNumber = latestInvoiceSnap.empty
-          ? 1
-          : Number(latestInvoiceSnap.docs[0].data().sequenceNumber || 0) + 1;
-      }
+      const sequenceNumber = counterSnap.exists()
+        ? Number(counterSnap.data().sequenceNumber || 0) + 1
+        : legacySequence + 1;
       const nextInvoiceNumber = `${prefix}-${issueYear}-${String(sequenceNumber).padStart(5, '0')}`;
 
       tx.set(counterRef, {
