@@ -1,5 +1,5 @@
 import { Router, type Response } from 'express';
-import { FieldValue, type DocumentData, type DocumentReference, type QueryDocumentSnapshot } from 'firebase-admin/firestore';
+import { FieldValue, type DocumentData, type DocumentReference, type QueryDocumentSnapshot, type Transaction } from 'firebase-admin/firestore';
 import { randomUUID } from 'node:crypto';
 import { requireAuth, type AuthRequest } from './authMiddleware.ts';
 import { adminDb } from './firebaseAdmin.ts';
@@ -97,7 +97,7 @@ function assertBalanceCoherent(balance: DocumentData) {
 }
 
 async function assertMemberInTransaction(
-  tx: FirebaseFirestore.Transaction,
+  tx: Transaction,
   orgId: string,
   actor: Actor,
   adminOnly = false,
@@ -140,7 +140,7 @@ router.post('/reserve', wrap(async (req, res) => {
       reads.set(productId, snapshot.docs);
     }
 
-    const balances = new Map<string, { ref: DocumentReference; data: FirebaseFirestore.DocumentData; add: number }>();
+    const balances = new Map<string, { ref: DocumentReference; data: DocumentData; add: number }>();
     for (const docs of reads.values()) {
       for (const snap of docs) {
         const data = snap.data();
@@ -198,13 +198,16 @@ router.post('/reserve', wrap(async (req, res) => {
 
 router.post('/cancel', wrap(async (req, res) => {
   const actor = actorFrom(req);
-  const orgId = text(req.body?.orgId, 'Organisation');
-  const orderId = text(req.body?.orderId, 'Commande');
+  const orgId = documentId(req.body?.orgId, 'Organisation');
+  const orderId = documentId(req.body?.orderId, 'Commande');
   const { org } = await authorizeOrg(orgId, actor);
   const memberUids = Array.isArray(org.memberUids) ? org.memberUids.slice(0, 50) : [actor.uid];
   const orderRef = adminDb.doc(`organizations/${orgId}/salesOrders/${orderId}`);
 
   await adminDb.runTransaction(async (tx) => {
+    await assertMemberInTransaction(tx, orgId, actor);
+    await assertMemberInTransaction(tx, orgId, actor);
+    await assertMemberInTransaction(tx, orgId, actor);
     const orderSnap = await tx.get(orderRef);
     if (!orderSnap.exists) throw new Error('Commande client introuvable.');
     const order = orderSnap.data()!;
@@ -253,8 +256,8 @@ router.post('/cancel', wrap(async (req, res) => {
 
 router.post('/ship', wrap(async (req, res) => {
   const actor = actorFrom(req);
-  const orgId = text(req.body?.orgId, 'Organisation');
-  const orderId = text(req.body?.orderId, 'Commande');
+  const orgId = documentId(req.body?.orgId, 'Organisation');
+  const orderId = documentId(req.body?.orderId, 'Commande');
   const warehouseId = documentId(req.body?.warehouseId, 'Entrepôt');
   const linesInput = req.body?.linesInput;
   if (!Array.isArray(linesInput) || !linesInput.length) throw new Error('Aucune ligne de livraison.');
@@ -289,7 +292,7 @@ router.post('/ship', wrap(async (req, res) => {
     for (const line of lines) assertReservationConsistency(line);
 
     const locationRefs = linesInput.map((line: any) => adminDb.doc(`organizations/${orgId}/locations/${documentId(line.locationId, 'Emplacement')}`));
-    const balanceRefs = linesInput.map((line: any) => adminDb.doc(`organizations/${orgId}/stockBalances/${documentId(line.productId, 'Produit')}_${warehouseId}_${text(line.locationId, 'Emplacement')}`));
+    const balanceRefs = linesInput.map((line: any) => adminDb.doc(`organizations/${orgId}/stockBalances/${documentId(line.productId, 'Produit')}_${warehouseId}_${documentId(line.locationId, 'Emplacement')}`));
     const productRefs = [...new Set(linesInput.map((line: any) => String(line.productId)))].map((productId) => adminDb.doc(`organizations/${orgId}/products/${productId}`));
     const [locationSnaps, balanceSnaps, productSnaps] = await Promise.all([
       Promise.all(locationRefs.map((ref) => tx.get(ref))),
@@ -299,7 +302,7 @@ router.post('/ship', wrap(async (req, res) => {
     const products = new Map(productSnaps.filter((snap) => snap.exists).map((snap) => [snap.id, snap.data()!]));
     if (products.size !== productRefs.length) throw new Error('Un produit de la livraison est introuvable.');
     const deliveryLines: any[] = [];
-    const movementWrites: Array<{ ref: DocumentReference; data: any; balanceRef: FirebaseFirestore.DocumentReference; balanceData: any }> = [];
+    const movementWrites: Array<{ ref: DocumentReference; data: any; balanceRef: DocumentReference; balanceData: any }> = [];
 
     for (let i = 0; i < linesInput.length; i++) {
       const input = linesInput[i];
@@ -384,9 +387,9 @@ router.post('/ship', wrap(async (req, res) => {
 
 router.post('/receipt', wrap(async (req, res) => {
   const actor = actorFrom(req);
-  const orgId = text(req.body?.orgId, 'Organisation');
+  const orgId = documentId(req.body?.orgId, 'Organisation');
   const orderId = documentId(req.body?.orderId, 'Commande fournisseur');
-  const warehouseId = text(req.body?.warehouseId, 'Entrepôt');
+  const warehouseId = documentId(req.body?.warehouseId, 'Entrepôt');
   const linesInput = req.body?.linesInput;
   const inspectionStatus = req.body?.inspectionStatus;
   if (!['passed', 'partial_issue', 'rejected'].includes(String(inspectionStatus))) throw new Error('Statut de contrôle qualité invalide.');
@@ -397,8 +400,8 @@ router.post('/receipt', wrap(async (req, res) => {
     if (receivedQty < 0) throw new Error('La quantité reçue ne peut pas être négative.');
     if (receivedQty === 0) return null;
     return {
-      productId: text(line.productId, 'Produit'),
-      locationId: text(line.locationId, 'Emplacement'),
+      productId: documentId(line.productId, 'Produit'),
+      locationId: documentId(line.locationId, 'Emplacement'),
       ...validateReceiptQuantities(line, inspectionStatus),
     };
   }).filter(Boolean) as Array<{ productId: string; locationId: string; receivedQty: number; acceptedQty: number; rejectedQty: number }>;
@@ -432,7 +435,7 @@ router.post('/receipt', wrap(async (req, res) => {
     ]);
     const updatedOrderLines = order.lines.map((line: any) => ({ ...line }));
     const receiptLines: any[] = [];
-    const stockWrites: Array<{ balanceRef: FirebaseFirestore.DocumentReference; movementRef: FirebaseFirestore.DocumentReference; balanceData: any; movementData: any }> = [];
+    const stockWrites: Array<{ balanceRef: DocumentReference; movementRef: DocumentReference; balanceData: any; movementData: any }> = [];
 
     for (let i = 0; i < normalized.length; i++) {
       const input = normalized[i];
@@ -512,7 +515,7 @@ router.post('/receipt', wrap(async (req, res) => {
 
 router.post('/demo-seed', wrap(async (req, res) => {
   const actor = actorFrom(req);
-  const orgId = text(req.body?.orgId, 'Organisation');
+  const orgId = documentId(req.body?.orgId, 'Organisation');
   const { org } = await authorizeOrg(orgId, actor);
   const memberRole = await adminDb.doc(`organizations/${orgId}/members/${actor.uid}`).get();
   if (!['owner', 'admin'].includes(String(memberRole.data()?.role))) throw new Error('Seul un propriétaire ou administrateur peut initialiser les stocks de démonstration.');
@@ -587,9 +590,9 @@ router.post('/demo-seed', wrap(async (req, res) => {
 
 router.post('/movement', wrap(async (req, res) => {
   const actor = actorFrom(req);
-  const orgId = text(req.body?.orgId, 'Organisation');
+  const orgId = documentId(req.body?.orgId, 'Organisation');
   const productId = documentId(req.body?.productId, 'Produit');
-  const warehouseId = text(req.body?.warehouseId, 'Entrepôt');
+  const warehouseId = documentId(req.body?.warehouseId, 'Entrepôt');
   const locationId = documentId(req.body?.locationId, 'Emplacement');
   const movementType = String(req.body?.movementType);
   if (!['IN', 'OUT', 'TRANSFER', 'ADJUSTMENT'].includes(movementType)) throw new Error('Type de mouvement invalide.');
@@ -648,7 +651,7 @@ router.post('/movement', wrap(async (req, res) => {
     const unitCost = unitCostInput > 0 ? unitCostInput : Number(source.unitCost ?? product.purchasePrice ?? 0);
     const nextAvailable = computeAvailableQuantity(nextPhysical, currentReserved);
     let target: any = null;
-    let targetRef: FirebaseFirestore.DocumentReference | null = null;
+    let targetRef: DocumentReference | null = null;
     if (movementType === 'TRANSFER') {
       targetRef = adminDb.doc(`organizations/${orgId}/stockBalances/${productId}_${targetWarehouseId}_${targetLocationId}`);
       const targetWarehouseRef = adminDb.doc(`organizations/${orgId}/warehouses/${targetWarehouseId}`);
