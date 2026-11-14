@@ -111,6 +111,38 @@ async function seed() {
     }
     await setDoc(doc(db, 'organizations', 'org_alpha', 'stockBalances', 'product_1_warehouse_1_location_1'), balance());
     await setDoc(doc(db, 'organizations', 'org_alpha', 'stockMovements', 'movement_in_001'), movement('operator_alpha', 'movement_in_001'));
+    await setDoc(doc(db, 'organizations', 'org_alpha', 'salesOrders', 'order_1'), {
+      id: 'order_1',
+      orgId: 'org_alpha',
+      reference: 'CC-TEST-0001',
+      customerId: 'customer_1',
+      customerName: 'Client de test',
+      warehouseId: 'warehouse_1',
+      warehouseName: 'Entrepôt principal',
+      status: 'confirmed',
+      stockReserved: false,
+      shippingCost: 0,
+      subtotalHt: 3,
+      vatTotal: 0.6,
+      totalTtc: 3.6,
+      lines: [{
+        productId: 'product_1',
+        productSku: 'SKU-1',
+        productName: 'Produit test',
+        unit: 'unité',
+        quantity: 3,
+        reservedQty: 0,
+        deliveredQty: 0,
+        unitPrice: 1,
+        discountPct: 0,
+        vatRate: 20,
+      }],
+      createdByUid: 'owner_alpha',
+      createdByName: 'owner_alpha',
+      memberUids: ['owner_alpha', 'operator_alpha'],
+      createdAt: now,
+      updatedAt: now,
+    });
     await setDoc(doc(db, 'users', 'viewer_alpha'), {
       uid: 'viewer_alpha',
       email: 'viewer_alpha@example.test',
@@ -227,6 +259,39 @@ try {
       physicalQty: 0,
       availableQty: 0,
       updatedAt: serverTimestamp(),
+    }));
+  });
+
+  await check('clients cannot edit sales order reservation allocations', async () => {
+    const orderRef = doc(dbFor('operator_alpha'), 'organizations', 'org_alpha', 'salesOrders', 'order_1');
+    await assertFails(updateDoc(orderRef, {
+      stockReserved: true,
+      lines: [{
+        productId: 'product_1',
+        productSku: 'SKU-1',
+        productName: 'Produit test',
+        unit: 'unité',
+        quantity: 3,
+        reservedQty: 3,
+        deliveredQty: 0,
+        reservationAllocations: [{ warehouseId: 'warehouse_1', locationId: 'location_1', quantity: 3 }],
+        unitPrice: 1,
+        discountPct: 0,
+        vatRate: 20,
+      }],
+      updatedAt: serverTimestamp(),
+    }));
+  });
+
+  await check('clients cannot create goods receipts directly', async () => {
+    await assertFails(setDoc(doc(dbFor('operator_alpha'), 'organizations', 'org_alpha', 'goodsReceipts', 'receipt_forged'), {
+      id: 'receipt_forged',
+    }));
+  });
+
+  await check('clients cannot create delivery notes directly', async () => {
+    await assertFails(setDoc(doc(dbFor('operator_alpha'), 'organizations', 'org_alpha', 'deliveryNotes', 'delivery_forged'), {
+      id: 'delivery_forged',
     }));
   });
 
