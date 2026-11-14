@@ -621,7 +621,7 @@ service cloud.firestore {
           && isValidUserMembership(incoming())
           && incoming().orgId == existing().orgId
           && incoming().joinedAt == existing().joinedAt
-          && incoming().diff(existing()).affectedKeys().hasOnly(['orgName', 'currency', 'plan']);
+          && incoming().diff(existing()).affectedKeys().hasOnly(['orgName', 'currency']);
         allow delete: if isVerifiedUser() && isValidId(userId) && isValidId(orgId) && request.auth.uid == userId;
       }
     }
@@ -631,10 +631,13 @@ service cloud.firestore {
     // -------------------------------------------------------------------------
     match /organizations/{orgId} {
       allow get: if isSignedIn() && isValidId(orgId) && isOrgMember(orgId);
-      allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+      allow list: if isValidId(resource.data.id) && isOrgMember(resource.data.id);
       allow create: if isVerifiedUser()
         && isValidId(orgId)
         && isValidOrganization(incoming())
+        && incoming().plan == 'starter'
+        && !('stripeCustomerId' in incoming())
+        && !('stripeSubscriptionId' in incoming())
         && incoming().id == orgId
         && incoming().ownerId == request.auth.uid
         && request.auth.uid in incoming().memberUids
@@ -649,19 +652,15 @@ service cloud.firestore {
         && incoming().ownerId == existing().ownerId
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
-        && (!('planUpdatedAt' in incoming())
-          || incoming().planUpdatedAt == request.time
-          || (('planUpdatedAt' in existing()) && incoming().planUpdatedAt == existing().planUpdatedAt))
         && incoming().diff(existing()).affectedKeys().hasOnly([
           'name', 'currency', 'country', 'siret', 'vatNumber',
-          'plan', 'billingCycle', 'subscriptionStatus', 'stripeCustomerId', 'stripeSubscriptionId', 'planUpdatedAt',
           'isDemoSeeded', 'memberUids', 'updatedAt'
         ]);
       allow delete: if false;
 
       match /members/{memberUid} {
         allow get: if isSignedIn() && isValidId(orgId) && isValidId(memberUid) && isOrgMember(orgId);
-        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
         allow create: if isVerifiedUser()
           && isValidId(orgId)
           && isValidId(memberUid)
@@ -708,7 +707,7 @@ service cloud.firestore {
 
       match /categories/{categoryId} {
         allow get: if isSignedIn() && isValidId(orgId) && isValidId(categoryId) && isOrgMember(orgId);
-        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
         allow create: if isVerifiedUser()
           && isValidId(orgId)
           && isValidId(categoryId)
@@ -730,7 +729,7 @@ service cloud.firestore {
 
       match /products/{productId} {
         allow get: if isSignedIn() && isValidId(orgId) && isValidId(productId) && isOrgMember(orgId);
-        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
         allow create: if isVerifiedUser()
           && isValidId(orgId)
           && isValidId(productId)
@@ -759,7 +758,7 @@ service cloud.firestore {
 
       match /warehouses/{warehouseId} {
         allow get: if isSignedIn() && isValidId(orgId) && isValidId(warehouseId) && isOrgMember(orgId);
-        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
         allow create: if isVerifiedUser()
           && isValidId(orgId)
           && isValidId(warehouseId)
@@ -785,7 +784,7 @@ service cloud.firestore {
 
       match /locations/{locationId} {
         allow get: if isSignedIn() && isValidId(orgId) && isValidId(locationId) && isOrgMember(orgId);
-        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
         allow create: if isVerifiedUser()
           && isValidId(orgId)
           && isValidId(locationId)
@@ -808,7 +807,7 @@ service cloud.firestore {
 
       match /stockBalances/{balanceId} {
         allow get: if isSignedIn() && isValidId(orgId) && isValidId(balanceId) && isOrgMember(orgId);
-        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
         allow create: if isVerifiedUser()
           && isValidId(orgId)
           && isValidId(balanceId)
@@ -836,7 +835,7 @@ service cloud.firestore {
 
       match /stockMovements/{movementId} {
         allow get: if isSignedIn() && isValidId(orgId) && isValidId(movementId) && isOrgMember(orgId);
-        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
         allow create: if isVerifiedUser()
           && isValidId(orgId)
           && isValidId(movementId)
@@ -849,7 +848,7 @@ service cloud.firestore {
 
       match /auditLogs/{logId} {
         allow get: if isSignedIn() && isValidId(orgId) && isValidId(logId) && isOrgMember(orgId);
-        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
         allow create: if isVerifiedUser()
           && isValidId(orgId)
           && isValidId(logId)
@@ -862,7 +861,7 @@ service cloud.firestore {
 
       match /notifications/{notificationId} {
         allow get: if isSignedIn() && isValidId(orgId) && isValidId(notificationId) && isOrgMember(orgId);
-        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
         allow create: if isVerifiedUser()
           && isValidId(orgId)
           && isValidId(notificationId)
@@ -884,7 +883,7 @@ service cloud.firestore {
 
       match /suppliers/{supplierId} {
         allow get: if isSignedIn() && isValidId(orgId) && isValidId(supplierId) && isOrgMember(orgId);
-        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
         allow create: if isVerifiedUser()
           && isValidId(orgId)
           && isValidId(supplierId)
@@ -912,7 +911,7 @@ service cloud.firestore {
 
       match /purchaseRequests/{requestId} {
         allow get: if isSignedIn() && isValidId(orgId) && isValidId(requestId) && isOrgMember(orgId);
-        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
         allow create: if isVerifiedUser()
           && isValidId(orgId)
           && isValidId(requestId)
@@ -940,7 +939,7 @@ service cloud.firestore {
 
       match /purchaseOrders/{orderId} {
         allow get: if isSignedIn() && isValidId(orgId) && isValidId(orderId) && isOrgMember(orgId);
-        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
         allow create: if isVerifiedUser()
           && isValidId(orgId)
           && isValidId(orderId)
@@ -971,7 +970,7 @@ service cloud.firestore {
 
       match /goodsReceipts/{receiptId} {
         allow get: if isSignedIn() && isValidId(orgId) && isValidId(receiptId) && isOrgMember(orgId);
-        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
         allow create: if isVerifiedUser()
           && isValidId(orgId)
           && isValidId(receiptId)
@@ -984,7 +983,7 @@ service cloud.firestore {
 
       match /supplierInvoices/{invoiceId} {
         allow get: if isSignedIn() && isValidId(orgId) && isValidId(invoiceId) && isOrgMember(orgId);
-        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
         allow create: if isVerifiedUser()
           && isValidId(orgId)
           && isValidId(invoiceId)
@@ -1011,7 +1010,7 @@ service cloud.firestore {
 
       match /customers/{customerId} {
         allow get: if isSignedIn() && isValidId(orgId) && isValidId(customerId) && isOrgMember(orgId);
-        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
         allow create: if isVerifiedUser()
           && isValidId(orgId)
           && isValidId(customerId)
@@ -1040,7 +1039,7 @@ service cloud.firestore {
 
       match /quotes/{quoteId} {
         allow get: if isSignedIn() && isValidId(orgId) && isValidId(quoteId) && isOrgMember(orgId);
-        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
         allow create: if isVerifiedUser()
           && isValidId(orgId)
           && isValidId(quoteId)
@@ -1072,7 +1071,7 @@ service cloud.firestore {
 
       match /salesOrders/{orderId} {
         allow get: if isSignedIn() && isValidId(orgId) && isValidId(orderId) && isOrgMember(orgId);
-        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
         allow create: if isVerifiedUser()
           && isValidId(orgId)
           && isValidId(orderId)
@@ -1104,7 +1103,7 @@ service cloud.firestore {
 
       match /deliveryNotes/{deliveryId} {
         allow get: if isSignedIn() && isValidId(orgId) && isValidId(deliveryId) && isOrgMember(orgId);
-        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
         allow create: if isVerifiedUser()
           && isValidId(orgId)
           && isValidId(deliveryId)
@@ -1117,7 +1116,7 @@ service cloud.firestore {
 
       match /salesInvoices/{invoiceId} {
         allow get: if isSignedIn() && isValidId(orgId) && isValidId(invoiceId) && isOrgMember(orgId);
-        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
         allow create: if isVerifiedUser()
           && isValidId(orgId)
           && isValidId(invoiceId)
@@ -1146,7 +1145,7 @@ service cloud.firestore {
 
       match /payments/{paymentId} {
         allow get: if isSignedIn() && isValidId(orgId) && isValidId(paymentId) && isOrgMember(orgId);
-        allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
         allow create: if isVerifiedUser()
           && isValidId(orgId)
           && isValidId(paymentId)

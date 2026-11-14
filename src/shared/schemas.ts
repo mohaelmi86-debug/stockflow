@@ -254,11 +254,9 @@ export const addOrganizationMemberSchema = z.object({
 });
 
 export const billingCheckoutSchema = z.object({
-  orgId: z.string().trim().min(3).max(128),
-  orgName: z.string().trim().min(2).max(120),
+  orgId: z.string().trim().min(3).max(128).regex(/^[A-Za-z0-9_-]+$/),
   planCode: planSchema,
   billingCycle: billingCycleSchema.default('monthly'),
-  customerEmail: z.string().trim().email().optional(),
 });
 
 export type AddOrganizationMemberInput = z.infer<typeof addOrganizationMemberSchema>;
