@@ -1,0 +1,669 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Private authenticated user profile stored under /users/{userId}.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "format": "email", "maxLength": 254 },
+        "displayName": { "type": "string", "maxLength": 120 },
+        "photoURL": { "type": "string", "maxLength": 512 },
+        "activeOrgId": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "displayName", "createdAt", "updatedAt"]
+    },
+    "UserMembership": {
+      "title": "UserMembership",
+      "description": "User-owned organization membership index for fast multi-tenant listing.",
+      "type": "object",
+      "properties": {
+        "orgId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "orgName": { "type": "string", "maxLength": 120 },
+        "orgSlug": { "type": "string", "maxLength": 80 },
+        "role": { "type": "string", "enum": ["owner", "admin", "manager", "operator", "viewer"] },
+        "plan": { "type": "string", "enum": ["starter", "pro", "business", "enterprise"] },
+        "currency": { "type": "string", "maxLength": 10 },
+        "joinedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["orgId", "orgName", "orgSlug", "role", "plan", "currency", "joinedAt"]
+    },
+    "Organization": {
+      "title": "Organization",
+      "description": "Tenant organization workspace.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "slug": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "currency": { "type": "string", "enum": ["EUR", "USD", "GBP", "CHF", "CAD", "MAD", "XOF"] },
+        "country": { "type": "string", "maxLength": 80 },
+        "siret": { "type": "string", "maxLength": 32 },
+        "vatNumber": { "type": "string", "maxLength": 32 },
+        "plan": { "type": "string", "enum": ["starter", "pro", "business", "enterprise"] },
+        "billingCycle": { "type": "string", "enum": ["monthly", "annual"] },
+        "subscriptionStatus": { "type": "string", "enum": ["active", "trialing", "past_due", "canceled"] },
+        "stripeCustomerId": { "type": "string", "maxLength": 128 },
+        "stripeSubscriptionId": { "type": "string", "maxLength": 128 },
+        "planUpdatedAt": { "type": "string", "format": "date-time" },
+        "ownerId": { "type": "string", "maxLength": 128 },
+        "memberUids": { "type": "array" },
+        "isDemoSeeded": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "slug", "currency", "plan", "ownerId", "memberUids", "createdAt", "updatedAt"]
+    },
+    "OrganizationMember": {
+      "title": "OrganizationMember",
+      "description": "Authoritative RBAC member record inside an organization.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "orgId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "orgOwnerId": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 254 },
+        "displayName": { "type": "string", "maxLength": 120 },
+        "role": { "type": "string", "enum": ["owner", "admin", "manager", "operator", "viewer"] },
+        "status": { "type": "string", "enum": ["active", "invited", "suspended"] },
+        "memberUids": { "type": "array" },
+        "joinedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "orgId", "orgOwnerId", "email", "displayName", "role", "status", "memberUids", "joinedAt"]
+    },
+    "ProductCategory": {
+      "title": "ProductCategory",
+      "description": "Organization-scoped product category.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "orgId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "code": { "type": "string", "minLength": 1, "maxLength": 24 },
+        "description": { "type": "string", "maxLength": 300 },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "orgId", "name", "code", "memberUids", "createdAt"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Catalog product belonging to an organization.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "orgId": { "type": "string", "maxLength": 128 },
+        "sku": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "barcode": { "type": "string", "maxLength": 64 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "categoryId": { "type": "string", "maxLength": 128 },
+        "categoryName": { "type": "string", "maxLength": 80 },
+        "brand": { "type": "string", "maxLength": 80 },
+        "unit": { "type": "string", "maxLength": 24 },
+        "purchasePrice": { "type": "number" },
+        "salePrice": { "type": "number" },
+        "vatRate": { "type": "number" },
+        "minStock": { "type": "number" },
+        "maxStock": { "type": "number" },
+        "status": { "type": "string", "enum": ["active", "draft", "archived"] },
+        "trackBatches": { "type": "boolean" },
+        "trackSerials": { "type": "boolean" },
+        "trackExpiry": { "type": "boolean" },
+        "isDemo": { "type": "boolean" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "orgId", "sku", "name", "unit", "purchasePrice", "salePrice", "vatRate", "minStock", "maxStock", "status", "memberUids", "createdAt", "updatedAt"]
+    },
+    "Warehouse": {
+      "title": "Warehouse",
+      "description": "Physical warehouse belonging to an organization.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "orgId": { "type": "string", "maxLength": 128 },
+        "code": { "type": "string", "minLength": 1, "maxLength": 24 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "address": { "type": "string", "maxLength": 240 },
+        "city": { "type": "string", "maxLength": 80 },
+        "country": { "type": "string", "maxLength": 80 },
+        "capacityUnits": { "type": "number" },
+        "isDefault": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["active", "inactive"] },
+        "isDemo": { "type": "boolean" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "orgId", "code", "name", "capacityUnits", "isDefault", "status", "memberUids", "createdAt", "updatedAt"]
+    },
+    "WarehouseLocation": {
+      "title": "WarehouseLocation",
+      "description": "Zone, aisle, rack, or bin location inside a warehouse.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "orgId": { "type": "string", "maxLength": 128 },
+        "warehouseId": { "type": "string", "maxLength": 128 },
+        "code": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "zoneType": { "type": "string", "enum": ["storage", "receiving", "shipping", "picking"] },
+        "aisle": { "type": "string", "maxLength": 24 },
+        "rack": { "type": "string", "maxLength": 24 },
+        "level": { "type": "string", "maxLength": 24 },
+        "capacity": { "type": "number" },
+        "status": { "type": "string", "enum": ["active", "blocked"] },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "orgId", "warehouseId", "code", "zoneType", "capacity", "status", "memberUids", "createdAt"]
+    },
+    "StockBalance": {
+      "title": "StockBalance",
+      "description": "Computed stock balance maintained strictly via stock movements.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "orgId": { "type": "string", "maxLength": 128 },
+        "productId": { "type": "string", "maxLength": 128 },
+        "productSku": { "type": "string", "maxLength": 64 },
+        "productName": { "type": "string", "maxLength": 160 },
+        "warehouseId": { "type": "string", "maxLength": 128 },
+        "warehouseName": { "type": "string", "maxLength": 120 },
+        "locationId": { "type": "string", "maxLength": 128 },
+        "locationCode": { "type": "string", "maxLength": 32 },
+        "physicalQty": { "type": "number" },
+        "reservedQty": { "type": "number" },
+        "onOrderQty": { "type": "number" },
+        "inTransitQty": { "type": "number" },
+        "availableQty": { "type": "number" },
+        "unitCost": { "type": "number" },
+        "memberUids": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "orgId", "productId", "productSku", "productName", "warehouseId", "warehouseName", "locationId", "locationCode", "physicalQty", "reservedQty", "onOrderQty", "inTransitQty", "availableQty", "unitCost", "memberUids", "updatedAt"]
+    },
+    "StockMovement": {
+      "title": "StockMovement",
+      "description": "Immutable traceable ledger entry for every stock quantity change.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "orgId": { "type": "string", "maxLength": 128 },
+        "reference": { "type": "string", "minLength": 3, "maxLength": 64 },
+        "movementType": { "type": "string", "enum": ["IN", "OUT", "TRANSFER", "ADJUSTMENT"] },
+        "productId": { "type": "string", "maxLength": 128 },
+        "productSku": { "type": "string", "maxLength": 64 },
+        "productName": { "type": "string", "maxLength": 160 },
+        "warehouseId": { "type": "string", "maxLength": 128 },
+        "warehouseName": { "type": "string", "maxLength": 120 },
+        "locationId": { "type": "string", "maxLength": 128 },
+        "locationCode": { "type": "string", "maxLength": 32 },
+        "targetWarehouseId": { "type": "string", "maxLength": 128 },
+        "targetWarehouseName": { "type": "string", "maxLength": 120 },
+        "targetLocationId": { "type": "string", "maxLength": 128 },
+        "targetLocationCode": { "type": "string", "maxLength": 32 },
+        "quantity": { "type": "number" },
+        "unitCost": { "type": "number" },
+        "reason": { "type": "string", "minLength": 2, "maxLength": 300 },
+        "sourceDocumentType": { "type": "string", "maxLength": 48 },
+        "sourceDocumentRef": { "type": "string", "maxLength": 64 },
+        "performedByUid": { "type": "string", "maxLength": 128 },
+        "performedByName": { "type": "string", "maxLength": 120 },
+        "isDemo": { "type": "boolean" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "orgId", "reference", "movementType", "productId", "productSku", "productName", "warehouseId", "warehouseName", "locationId", "locationCode", "quantity", "unitCost", "reason", "performedByUid", "performedByName", "memberUids", "createdAt"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Immutable activity and security audit trail per organization.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "orgId": { "type": "string", "maxLength": 128 },
+        "actorUid": { "type": "string", "maxLength": 128 },
+        "actorEmail": { "type": "string", "maxLength": 254 },
+        "action": { "type": "string", "maxLength": 64 },
+        "entityType": { "type": "string", "maxLength": 64 },
+        "entityId": { "type": "string", "maxLength": 128 },
+        "summary": { "type": "string", "maxLength": 300 },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "orgId", "actorUid", "actorEmail", "action", "entityType", "entityId", "summary", "memberUids", "createdAt"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "Operational alerts and notifications scoped to an organization.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "orgId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 120 },
+        "message": { "type": "string", "maxLength": 300 },
+        "severity": { "type": "string", "enum": ["info", "warning", "error", "success"] },
+        "isRead": { "type": "boolean" },
+        "link": { "type": "string", "maxLength": 160 },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "orgId", "title", "message", "severity", "isRead", "memberUids", "createdAt"]
+    },
+    "Supplier": {
+      "title": "Supplier",
+      "description": "Organization-scoped supplier master record.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "orgId": { "type": "string", "maxLength": 128 },
+        "code": { "type": "string", "minLength": 1, "maxLength": 24 },
+        "name": { "type": "string", "minLength": 2, "maxLength": 140 },
+        "contactName": { "type": "string", "maxLength": 120 },
+        "email": { "type": "string", "maxLength": 254 },
+        "phone": { "type": "string", "maxLength": 32 },
+        "address": { "type": "string", "maxLength": 240 },
+        "city": { "type": "string", "maxLength": 80 },
+        "country": { "type": "string", "maxLength": 80 },
+        "siret": { "type": "string", "maxLength": 32 },
+        "vatNumber": { "type": "string", "maxLength": 32 },
+        "paymentTerms": { "type": "string", "maxLength": 64 },
+        "leadTimeDays": { "type": "number" },
+        "rating": { "type": "number" },
+        "onTimeRate": { "type": "number" },
+        "status": { "type": "string", "enum": ["active", "inactive"] },
+        "notes": { "type": "string", "maxLength": 600 },
+        "isDemo": { "type": "boolean" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "orgId", "code", "name", "paymentTerms", "leadTimeDays", "rating", "onTimeRate", "status", "memberUids", "createdAt", "updatedAt"]
+    },
+    "PurchaseRequest": {
+      "title": "PurchaseRequest",
+      "description": "Internal purchase requisition and supplier RFQ comparison.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "orgId": { "type": "string", "maxLength": 128 },
+        "reference": { "type": "string", "maxLength": 64 },
+        "title": { "type": "string", "maxLength": 160 },
+        "warehouseId": { "type": "string", "maxLength": 128 },
+        "warehouseName": { "type": "string", "maxLength": 120 },
+        "priority": { "type": "string", "enum": ["normal", "urgent"] },
+        "status": { "type": "string", "enum": ["draft", "pending_approval", "approved", "rfq_sent", "converted", "rejected"] },
+        "lines": { "type": "array" },
+        "rfqOffers": { "type": "array" },
+        "notes": { "type": "string", "maxLength": 500 },
+        "requestedByUid": { "type": "string", "maxLength": 128 },
+        "requestedByName": { "type": "string", "maxLength": 120 },
+        "convertedOrderId": { "type": "string", "maxLength": 128 },
+        "isDemo": { "type": "boolean" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "orgId", "reference", "title", "warehouseId", "warehouseName", "priority", "status", "lines", "requestedByUid", "requestedByName", "memberUids", "createdAt", "updatedAt"]
+    },
+    "PurchaseOrder": {
+      "title": "PurchaseOrder",
+      "description": "Supplier purchase order with lines, discounts, VAT, shipping, and delivery status.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "orgId": { "type": "string", "maxLength": 128 },
+        "reference": { "type": "string", "maxLength": 64 },
+        "supplierId": { "type": "string", "maxLength": 128 },
+        "supplierName": { "type": "string", "maxLength": 140 },
+        "warehouseId": { "type": "string", "maxLength": 128 },
+        "warehouseName": { "type": "string", "maxLength": 120 },
+        "status": { "type": "string", "enum": ["draft", "confirmed", "partially_received", "received", "invoiced", "closed", "canceled"] },
+        "expectedDate": { "type": "string", "maxLength": 32 },
+        "paymentTerms": { "type": "string", "maxLength": 64 },
+        "shippingCost": { "type": "number" },
+        "subtotalHt": { "type": "number" },
+        "vatTotal": { "type": "number" },
+        "totalTtc": { "type": "number" },
+        "lines": { "type": "array" },
+        "notes": { "type": "string", "maxLength": 600 },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "createdByName": { "type": "string", "maxLength": 120 },
+        "isDemo": { "type": "boolean" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "orgId", "reference", "supplierId", "supplierName", "warehouseId", "warehouseName", "status", "shippingCost", "subtotalHt", "vatTotal", "totalTtc", "lines", "createdByUid", "createdByName", "memberUids", "createdAt", "updatedAt"]
+    },
+    "GoodsReceipt": {
+      "title": "GoodsReceipt",
+      "description": "Validated goods receipt linked to purchase order and stock movements.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "orgId": { "type": "string", "maxLength": 128 },
+        "reference": { "type": "string", "maxLength": 64 },
+        "purchaseOrderId": { "type": "string", "maxLength": 128 },
+        "purchaseOrderRef": { "type": "string", "maxLength": 64 },
+        "supplierId": { "type": "string", "maxLength": 128 },
+        "supplierName": { "type": "string", "maxLength": 140 },
+        "warehouseId": { "type": "string", "maxLength": 128 },
+        "warehouseName": { "type": "string", "maxLength": 120 },
+        "inspectionStatus": { "type": "string", "enum": ["passed", "partial_issue", "rejected"] },
+        "deliveryNoteRef": { "type": "string", "maxLength": 64 },
+        "notes": { "type": "string", "maxLength": 400 },
+        "lines": { "type": "array" },
+        "receivedByUid": { "type": "string", "maxLength": 128 },
+        "receivedByName": { "type": "string", "maxLength": 120 },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "orgId", "reference", "purchaseOrderId", "purchaseOrderRef", "supplierId", "supplierName", "warehouseId", "warehouseName", "inspectionStatus", "lines", "receivedByUid", "receivedByName", "memberUids", "createdAt"]
+    },
+    "SupplierInvoice": {
+      "title": "SupplierInvoice",
+      "description": "Supplier invoice linked to purchase order with payment tracking.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "orgId": { "type": "string", "maxLength": 128 },
+        "invoiceNumber": { "type": "string", "maxLength": 64 },
+        "purchaseOrderId": { "type": "string", "maxLength": 128 },
+        "purchaseOrderRef": { "type": "string", "maxLength": 64 },
+        "supplierId": { "type": "string", "maxLength": 128 },
+        "supplierName": { "type": "string", "maxLength": 140 },
+        "issueDate": { "type": "string", "maxLength": 32 },
+        "dueDate": { "type": "string", "maxLength": 32 },
+        "totalHt": { "type": "number" },
+        "totalVat": { "type": "number" },
+        "totalTtc": { "type": "number" },
+        "paidAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "partially_paid", "paid"] },
+        "notes": { "type": "string", "maxLength": 400 },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "orgId", "invoiceNumber", "purchaseOrderId", "purchaseOrderRef", "supplierId", "supplierName", "issueDate", "dueDate", "totalHt", "totalVat", "totalTtc", "paidAmount", "status", "createdByUid", "memberUids", "createdAt", "updatedAt"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "B2B or B2C customer CRM master record scoped to an organization.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "orgId": { "type": "string", "maxLength": 128 },
+        "code": { "type": "string", "minLength": 1, "maxLength": 24 },
+        "type": { "type": "string", "enum": ["B2B", "B2C"] },
+        "name": { "type": "string", "minLength": 2, "maxLength": 140 },
+        "contactName": { "type": "string", "maxLength": 120 },
+        "email": { "type": "string", "maxLength": 254 },
+        "phone": { "type": "string", "maxLength": 32 },
+        "billingAddress": { "type": "string", "maxLength": 240 },
+        "shippingAddress": { "type": "string", "maxLength": 240 },
+        "city": { "type": "string", "maxLength": 80 },
+        "country": { "type": "string", "maxLength": 80 },
+        "siret": { "type": "string", "maxLength": 32 },
+        "vatNumber": { "type": "string", "maxLength": 32 },
+        "paymentTerms": { "type": "string", "maxLength": 64 },
+        "creditLimit": { "type": "number" },
+        "status": { "type": "string", "enum": ["active", "inactive"] },
+        "notes": { "type": "string", "maxLength": 600 },
+        "isDemo": { "type": "boolean" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "orgId", "code", "type", "name", "paymentTerms", "creditLimit", "status", "memberUids", "createdAt", "updatedAt"]
+    },
+    "Quote": {
+      "title": "Quote",
+      "description": "Customer sales quotation convertible into a sales order.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "orgId": { "type": "string", "maxLength": 128 },
+        "reference": { "type": "string", "maxLength": 64 },
+        "customerId": { "type": "string", "maxLength": 128 },
+        "customerName": { "type": "string", "maxLength": 140 },
+        "warehouseId": { "type": "string", "maxLength": 128 },
+        "warehouseName": { "type": "string", "maxLength": 120 },
+        "status": { "type": "string", "enum": ["draft", "sent", "accepted", "rejected", "expired", "converted"] },
+        "validUntil": { "type": "string", "maxLength": 32 },
+        "paymentTerms": { "type": "string", "maxLength": 64 },
+        "shippingCost": { "type": "number" },
+        "subtotalHt": { "type": "number" },
+        "vatTotal": { "type": "number" },
+        "totalTtc": { "type": "number" },
+        "lines": { "type": "array" },
+        "notes": { "type": "string", "maxLength": 600 },
+        "convertedOrderId": { "type": "string", "maxLength": 128 },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "createdByName": { "type": "string", "maxLength": 120 },
+        "isDemo": { "type": "boolean" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "orgId", "reference", "customerId", "customerName", "warehouseId", "warehouseName", "status", "validUntil", "shippingCost", "subtotalHt", "vatTotal", "totalTtc", "lines", "createdByUid", "createdByName", "memberUids", "createdAt", "updatedAt"]
+    },
+    "SalesOrder": {
+      "title": "SalesOrder",
+      "description": "Customer sales order with atomic stock reservation and fulfillment progress.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "orgId": { "type": "string", "maxLength": 128 },
+        "reference": { "type": "string", "maxLength": 64 },
+        "quoteId": { "type": "string", "maxLength": 128 },
+        "customerId": { "type": "string", "maxLength": 128 },
+        "customerName": { "type": "string", "maxLength": 140 },
+        "warehouseId": { "type": "string", "maxLength": 128 },
+        "warehouseName": { "type": "string", "maxLength": 120 },
+        "status": { "type": "string", "enum": ["draft", "confirmed", "preparing", "partially_delivered", "delivered", "invoiced", "closed", "canceled"] },
+        "stockReserved": { "type": "boolean" },
+        "expectedDeliveryDate": { "type": "string", "maxLength": 32 },
+        "paymentTerms": { "type": "string", "maxLength": 64 },
+        "shippingCost": { "type": "number" },
+        "subtotalHt": { "type": "number" },
+        "vatTotal": { "type": "number" },
+        "totalTtc": { "type": "number" },
+        "lines": { "type": "array" },
+        "notes": { "type": "string", "maxLength": 600 },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "createdByName": { "type": "string", "maxLength": 120 },
+        "isDemo": { "type": "boolean" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "orgId", "reference", "customerId", "customerName", "warehouseId", "warehouseName", "status", "stockReserved", "shippingCost", "subtotalHt", "vatTotal", "totalTtc", "lines", "createdByUid", "createdByName", "memberUids", "createdAt", "updatedAt"]
+    },
+    "DeliveryNote": {
+      "title": "DeliveryNote",
+      "description": "Immutable delivery note linked to sales order and atomic OUT stock movements.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "orgId": { "type": "string", "maxLength": 128 },
+        "reference": { "type": "string", "maxLength": 64 },
+        "salesOrderId": { "type": "string", "maxLength": 128 },
+        "salesOrderRef": { "type": "string", "maxLength": 64 },
+        "customerId": { "type": "string", "maxLength": 128 },
+        "customerName": { "type": "string", "maxLength": 140 },
+        "warehouseId": { "type": "string", "maxLength": 128 },
+        "warehouseName": { "type": "string", "maxLength": 120 },
+        "carrier": { "type": "string", "maxLength": 80 },
+        "trackingNumber": { "type": "string", "maxLength": 64 },
+        "notes": { "type": "string", "maxLength": 400 },
+        "lines": { "type": "array" },
+        "deliveredByUid": { "type": "string", "maxLength": 128 },
+        "deliveredByName": { "type": "string", "maxLength": 120 },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "orgId", "reference", "salesOrderId", "salesOrderRef", "customerId", "customerName", "warehouseId", "warehouseName", "lines", "deliveredByUid", "deliveredByName", "memberUids", "createdAt"]
+    },
+    "SalesInvoice": {
+      "title": "SalesInvoice",
+      "description": "Sequential French-compliant customer invoice, deposit invoice, or credit note.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "orgId": { "type": "string", "maxLength": 128 },
+        "invoiceNumber": { "type": "string", "maxLength": 64 },
+        "invoiceType": { "type": "string", "enum": ["invoice", "deposit", "credit_note"] },
+        "sequenceNumber": { "type": "number" },
+        "salesOrderId": { "type": "string", "maxLength": 128 },
+        "salesOrderRef": { "type": "string", "maxLength": 64 },
+        "customerId": { "type": "string", "maxLength": 128 },
+        "customerName": { "type": "string", "maxLength": 140 },
+        "customerSiret": { "type": "string", "maxLength": 32 },
+        "customerVatNumber": { "type": "string", "maxLength": 32 },
+        "customerAddress": { "type": "string", "maxLength": 240 },
+        "issueDate": { "type": "string", "maxLength": 32 },
+        "dueDate": { "type": "string", "maxLength": 32 },
+        "shippingCost": { "type": "number" },
+        "totalHt": { "type": "number" },
+        "totalVat": { "type": "number" },
+        "totalTtc": { "type": "number" },
+        "paidAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["issued", "partially_paid", "paid"] },
+        "lines": { "type": "array" },
+        "relatedInvoiceId": { "type": "string", "maxLength": 128 },
+        "notes": { "type": "string", "maxLength": 400 },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "createdByName": { "type": "string", "maxLength": 120 },
+        "isDemo": { "type": "boolean" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "orgId", "invoiceNumber", "invoiceType", "sequenceNumber", "customerId", "customerName", "issueDate", "dueDate", "shippingCost", "totalHt", "totalVat", "totalTtc", "paidAmount", "status", "lines", "createdByUid", "createdByName", "memberUids", "createdAt", "updatedAt"]
+    },
+    "Payment": {
+      "title": "Payment",
+      "description": "Immutable cash-in / cash-out treasury ledger entry linked to an invoice.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "orgId": { "type": "string", "maxLength": 128 },
+        "reference": { "type": "string", "maxLength": 64 },
+        "direction": { "type": "string", "enum": ["incoming", "outgoing"] },
+        "invoiceId": { "type": "string", "maxLength": 128 },
+        "invoiceNumber": { "type": "string", "maxLength": 64 },
+        "partyId": { "type": "string", "maxLength": 128 },
+        "partyName": { "type": "string", "maxLength": 140 },
+        "amount": { "type": "number" },
+        "method": { "type": "string", "enum": ["transfer", "card", "check", "cash", "direct_debit"] },
+        "paymentDate": { "type": "string", "maxLength": 32 },
+        "notes": { "type": "string", "maxLength": 300 },
+        "recordedByUid": { "type": "string", "maxLength": 128 },
+        "recordedByName": { "type": "string", "maxLength": 120 },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "orgId", "reference", "direction", "invoiceId", "invoiceNumber", "partyId", "partyName", "amount", "method", "paymentDate", "recordedByUid", "recordedByName", "memberUids", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Private authenticated user profile."
+    },
+    "/users/{userId}/memberships/{orgId}": {
+      "schema": { "$ref": "#/entities/UserMembership" },
+      "description": "User's active organization memberships."
+    },
+    "/organizations/{orgId}": {
+      "schema": { "$ref": "#/entities/Organization" },
+      "description": "Tenant organization workspace root."
+    },
+    "/organizations/{orgId}/members/{memberUid}": {
+      "schema": { "$ref": "#/entities/OrganizationMember" },
+      "description": "Organization RBAC member records."
+    },
+    "/organizations/{orgId}/categories/{categoryId}": {
+      "schema": { "$ref": "#/entities/ProductCategory" },
+      "description": "Product categories scoped to organization."
+    },
+    "/organizations/{orgId}/products/{productId}": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "Product catalog scoped to organization."
+    },
+    "/organizations/{orgId}/warehouses/{warehouseId}": {
+      "schema": { "$ref": "#/entities/Warehouse" },
+      "description": "Warehouses scoped to organization."
+    },
+    "/organizations/{orgId}/locations/{locationId}": {
+      "schema": { "$ref": "#/entities/WarehouseLocation" },
+      "description": "Warehouse rack/zone locations scoped to organization."
+    },
+    "/organizations/{orgId}/stockBalances/{balanceId}": {
+      "schema": { "$ref": "#/entities/StockBalance" },
+      "description": "Real-time stock balances derived from movements."
+    },
+    "/organizations/{orgId}/stockMovements/{movementId}": {
+      "schema": { "$ref": "#/entities/StockMovement" },
+      "description": "Immutable stock movement ledger."
+    },
+    "/organizations/{orgId}/auditLogs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Organization audit trail."
+    },
+    "/organizations/{orgId}/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/Notification" },
+      "description": "Organization alerts and notifications."
+    },
+    "/organizations/{orgId}/suppliers/{supplierId}": {
+      "schema": { "$ref": "#/entities/Supplier" },
+      "description": "Suppliers scoped to organization."
+    },
+    "/organizations/{orgId}/purchaseRequests/{requestId}": {
+      "schema": { "$ref": "#/entities/PurchaseRequest" },
+      "description": "Purchase requests and supplier quote comparisons."
+    },
+    "/organizations/{orgId}/purchaseOrders/{orderId}": {
+      "schema": { "$ref": "#/entities/PurchaseOrder" },
+      "description": "Supplier purchase orders."
+    },
+    "/organizations/{orgId}/goodsReceipts/{receiptId}": {
+      "schema": { "$ref": "#/entities/GoodsReceipt" },
+      "description": "Validated goods receipts."
+    },
+    "/organizations/{orgId}/supplierInvoices/{invoiceId}": {
+      "schema": { "$ref": "#/entities/SupplierInvoice" },
+      "description": "Supplier invoices and settlement tracking."
+    },
+    "/organizations/{orgId}/customers/{customerId}": {
+      "schema": { "$ref": "#/entities/Customer" },
+      "description": "B2B and B2C customers scoped to organization."
+    },
+    "/organizations/{orgId}/quotes/{quoteId}": {
+      "schema": { "$ref": "#/entities/Quote" },
+      "description": "Customer sales quotations."
+    },
+    "/organizations/{orgId}/salesOrders/{orderId}": {
+      "schema": { "$ref": "#/entities/SalesOrder" },
+      "description": "Customer sales orders with stock reservation."
+    },
+    "/organizations/{orgId}/deliveryNotes/{deliveryId}": {
+      "schema": { "$ref": "#/entities/DeliveryNote" },
+      "description": "Immutable delivery notes linked to OUT stock movements."
+    },
+    "/organizations/{orgId}/salesInvoices/{invoiceId}": {
+      "schema": { "$ref": "#/entities/SalesInvoice" },
+      "description": "Sequential French-compliant customer invoices and credit notes."
+    },
+    "/organizations/{orgId}/payments/{paymentId}": {
+      "schema": { "$ref": "#/entities/Payment" },
+      "description": "Immutable incoming and outgoing treasury payment ledger."
+    }
+  }
+}

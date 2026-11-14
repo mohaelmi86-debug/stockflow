@@ -1,0 +1,6 @@
+{
+  "name": "StockFlow ERP",
+  "description": "Plateforme ERP SaaS universelle multi-entreprises : gestion des produits, stocks traçables, entrepôts, achats, ventes, facturation et indicateurs temps réel.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
