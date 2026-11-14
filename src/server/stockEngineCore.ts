@@ -66,9 +66,6 @@ export function validateReceiptQuantities(
   if (inspectionStatus === 'passed' && rejectedQty > STOCK_EPSILON) {
     throw new Error('Un contrôle « conforme » ne peut pas contenir de quantité rejetée.');
   }
-  if (inspectionStatus === 'partial_issue' && rejectedQty <= STOCK_EPSILON) {
-    throw new Error('Un contrôle « avec réserve » doit comporter une quantité rejetée.');
-  }
   if (inspectionStatus === 'rejected' && (acceptedQty > STOCK_EPSILON || Math.abs(rejectedQty - receivedQty) > STOCK_EPSILON)) {
     throw new Error('Un contrôle « refusé » doit rejeter la totalité de la quantité reçue.');
   }
