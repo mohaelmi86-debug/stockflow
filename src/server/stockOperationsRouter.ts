@@ -1,5 +1,5 @@
 import { Router, type Response } from 'express';
-import { FieldValue, type DocumentReference, type QueryDocumentSnapshot } from 'firebase-admin/firestore';
+import { FieldValue, type DocumentData, type DocumentReference, type QueryDocumentSnapshot } from 'firebase-admin/firestore';
 import { randomUUID } from 'node:crypto';
 import { requireAuth, type AuthRequest } from './authMiddleware.ts';
 import { adminDb } from './firebaseAdmin.ts';
@@ -26,6 +26,12 @@ function text(value: unknown, label: string, max = 128): string {
     throw new Error(`${label} invalide.`);
   }
   return value.trim();
+}
+
+function documentId(value: unknown, label: string): string {
+  const parsed = text(value, label);
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(parsed)) throw new Error(`${label} invalide.`);
+  return parsed;
 }
 
 function quantity(value: unknown, label: string): number {
@@ -82,12 +88,24 @@ function auditPayload(orgId: string, actor: Actor, action: string, entityType: s
   };
 }
 
-function assertBalanceCoherent(balance: FirebaseFirestore.DocumentData) {
+function assertBalanceCoherent(balance: DocumentData) {
   const expected = computeAvailableQuantity(balance.physicalQty, balance.reservedQty);
   if (Math.abs(Number(balance.availableQty) - expected) > 0.001) {
     throw new Error(`Solde incohérent pour ${balance.productSku ?? balance.productId} : disponible enregistré différent du stock physique moins réservations. Une réconciliation est nécessaire.`);
   }
   return expected;
+}
+
+async function assertMemberInTransaction(
+  tx: FirebaseFirestore.Transaction,
+  orgId: string,
+  actor: Actor,
+  adminOnly = false,
+): Promise<void> {
+  const memberSnap = await tx.get(adminDb.doc(`organizations/${orgId}/members/${actor.uid}`));
+  if (!memberSnap.exists || memberSnap.data()!.status !== 'active') throw new Error('Adhésion inactive : opération interdite.');
+  const allowed = adminOnly ? ['owner', 'admin'] : ['owner', 'admin', 'manager', 'operator'];
+  if (!allowed.includes(String(memberSnap.data()!.role))) throw new Error('Votre rôle ne permet pas cette opération.');
 }
 
 function nonTerminal(status: unknown, operation: string) {
@@ -98,13 +116,14 @@ function nonTerminal(status: unknown, operation: string) {
 
 router.post('/reserve', wrap(async (req, res) => {
   const actor = actorFrom(req);
-  const orgId = text(req.body?.orgId, 'Organisation');
-  const orderId = text(req.body?.orderId, 'Commande');
+  const orgId = documentId(req.body?.orgId, 'Organisation');
+  const orderId = documentId(req.body?.orderId, 'Commande');
   const { org } = await authorizeOrg(orgId, actor);
   const memberUids = Array.isArray(org.memberUids) ? org.memberUids.slice(0, 50) : [actor.uid];
   const orderRef = adminDb.doc(`organizations/${orgId}/salesOrders/${orderId}`);
 
   const result = await adminDb.runTransaction(async (tx) => {
+    await assertMemberInTransaction(tx, orgId, actor);
     const orderSnap = await tx.get(orderRef);
     if (!orderSnap.exists) throw new Error('Commande client introuvable.');
     const order = orderSnap.data()!;
@@ -236,13 +255,13 @@ router.post('/ship', wrap(async (req, res) => {
   const actor = actorFrom(req);
   const orgId = text(req.body?.orgId, 'Organisation');
   const orderId = text(req.body?.orderId, 'Commande');
-  const warehouseId = text(req.body?.warehouseId, 'Entrepôt');
+  const warehouseId = documentId(req.body?.warehouseId, 'Entrepôt');
   const linesInput = req.body?.linesInput;
   if (!Array.isArray(linesInput) || !linesInput.length) throw new Error('Aucune ligne de livraison.');
   const inputKeys = new Set<string>();
   for (const line of linesInput) {
-    const productId = text(line.productId, 'Produit');
-    const locationId = text(line.locationId, 'Emplacement');
+    const productId = documentId(line.productId, 'Produit');
+    const locationId = documentId(line.locationId, 'Emplacement');
     const deliveredQty = quantity(line.deliveredQty, 'Quantité expédiée');
     if (deliveredQty <= 0) throw new Error('Les quantités expédiées doivent être strictement positives.');
     const key = `${productId}_${locationId}`;
@@ -269,8 +288,8 @@ router.post('/ship', wrap(async (req, res) => {
     const lines = order.lines.map((line: any) => ({ ...line, reservationAllocations: [...(line.reservationAllocations ?? [])] }));
     for (const line of lines) assertReservationConsistency(line);
 
-    const locationRefs = linesInput.map((line: any) => adminDb.doc(`organizations/${orgId}/locations/${text(line.locationId, 'Emplacement')}`));
-    const balanceRefs = linesInput.map((line: any) => adminDb.doc(`organizations/${orgId}/stockBalances/${text(line.productId, 'Produit')}_${warehouseId}_${text(line.locationId, 'Emplacement')}`));
+    const locationRefs = linesInput.map((line: any) => adminDb.doc(`organizations/${orgId}/locations/${documentId(line.locationId, 'Emplacement')}`));
+    const balanceRefs = linesInput.map((line: any) => adminDb.doc(`organizations/${orgId}/stockBalances/${documentId(line.productId, 'Produit')}_${warehouseId}_${text(line.locationId, 'Emplacement')}`));
     const productRefs = [...new Set(linesInput.map((line: any) => String(line.productId)))].map((productId) => adminDb.doc(`organizations/${orgId}/products/${productId}`));
     const [locationSnaps, balanceSnaps, productSnaps] = await Promise.all([
       Promise.all(locationRefs.map((ref) => tx.get(ref))),
@@ -280,7 +299,7 @@ router.post('/ship', wrap(async (req, res) => {
     const products = new Map(productSnaps.filter((snap) => snap.exists).map((snap) => [snap.id, snap.data()!]));
     if (products.size !== productRefs.length) throw new Error('Un produit de la livraison est introuvable.');
     const deliveryLines: any[] = [];
-    const movementWrites: Array<{ ref: FirebaseFirestore.DocumentReference; data: any; balanceRef: FirebaseFirestore.DocumentReference; balanceData: any }> = [];
+    const movementWrites: Array<{ ref: DocumentReference; data: any; balanceRef: FirebaseFirestore.DocumentReference; balanceData: any }> = [];
 
     for (let i = 0; i < linesInput.length; i++) {
       const input = linesInput[i];
@@ -366,7 +385,7 @@ router.post('/ship', wrap(async (req, res) => {
 router.post('/receipt', wrap(async (req, res) => {
   const actor = actorFrom(req);
   const orgId = text(req.body?.orgId, 'Organisation');
-  const orderId = text(req.body?.orderId, 'Commande fournisseur');
+  const orderId = documentId(req.body?.orderId, 'Commande fournisseur');
   const warehouseId = text(req.body?.warehouseId, 'Entrepôt');
   const linesInput = req.body?.linesInput;
   const inspectionStatus = req.body?.inspectionStatus;
@@ -384,6 +403,9 @@ router.post('/receipt', wrap(async (req, res) => {
     };
   }).filter(Boolean) as Array<{ productId: string; locationId: string; receivedQty: number; acceptedQty: number; rejectedQty: number }>;
   if (!normalized.length) throw new Error('Saisissez au moins une quantité reçue.');
+  if (inspectionStatus === 'partial_issue' && !normalized.some((line) => line.rejectedQty > 0)) {
+    throw new Error('Un contrôle « avec réserve » doit comporter au moins une quantité rejetée.');
+  }
   const { org } = await authorizeOrg(orgId, actor);
   const memberUids = Array.isArray(org.memberUids) ? org.memberUids.slice(0, 50) : [actor.uid];
   const orderRef = adminDb.doc(`organizations/${orgId}/purchaseOrders/${orderId}`);
@@ -505,6 +527,7 @@ router.post('/demo-seed', wrap(async (req, res) => {
   ];
   const orgRef = adminDb.doc(`organizations/${orgId}`);
   await adminDb.runTransaction(async (tx) => {
+    await assertMemberInTransaction(tx, orgId, actor, true);
     const orgSnap = await tx.get(orgRef);
     if (!orgSnap.exists || orgSnap.data()!.isDemoSeeded !== true) throw new Error('Organisation de démonstration introuvable.');
     if (orgSnap.data()!.demoStockSeededAt) return;
@@ -565,9 +588,9 @@ router.post('/demo-seed', wrap(async (req, res) => {
 router.post('/movement', wrap(async (req, res) => {
   const actor = actorFrom(req);
   const orgId = text(req.body?.orgId, 'Organisation');
-  const productId = text(req.body?.productId, 'Produit');
+  const productId = documentId(req.body?.productId, 'Produit');
   const warehouseId = text(req.body?.warehouseId, 'Entrepôt');
-  const locationId = text(req.body?.locationId, 'Emplacement');
+  const locationId = documentId(req.body?.locationId, 'Emplacement');
   const movementType = String(req.body?.movementType);
   if (!['IN', 'OUT', 'TRANSFER', 'ADJUSTMENT'].includes(movementType)) throw new Error('Type de mouvement invalide.');
   const rawQuantity = quantity(req.body?.quantity, 'Quantité');
@@ -577,8 +600,8 @@ router.post('/movement', wrap(async (req, res) => {
   const reason = text(req.body?.reason, 'Motif', 300);
   const unitCostInput = req.body?.unitCost === undefined ? 0 : quantity(req.body.unitCost, 'Coût unitaire');
   if (unitCostInput < 0) throw new Error('Le coût unitaire ne peut pas être négatif.');
-  const targetWarehouseId = movementType === 'TRANSFER' ? text(req.body?.targetWarehouseId, 'Entrepôt destinataire') : '';
-  const targetLocationId = movementType === 'TRANSFER' ? text(req.body?.targetLocationId, 'Emplacement destinataire') : '';
+  const targetWarehouseId = movementType === 'TRANSFER' ? documentId(req.body?.targetWarehouseId, 'Entrepôt destinataire') : '';
+  const targetLocationId = movementType === 'TRANSFER' ? documentId(req.body?.targetLocationId, 'Emplacement destinataire') : '';
   if (movementType === 'TRANSFER' && targetWarehouseId === warehouseId && targetLocationId === locationId) throw new Error('La destination du transfert doit être différente de la source.');
   const { org } = await authorizeOrg(orgId, actor);
   const memberUids = Array.isArray(org.memberUids) ? org.memberUids.slice(0, 50) : [actor.uid];
@@ -591,6 +614,7 @@ router.post('/movement', wrap(async (req, res) => {
     const warehouseRef = adminDb.doc(`organizations/${orgId}/warehouses/${warehouseId}`);
     const locationRef = adminDb.doc(`organizations/${orgId}/locations/${locationId}`);
     const sourceRef = adminDb.doc(`organizations/${orgId}/stockBalances/${productId}_${warehouseId}_${locationId}`);
+    await assertMemberInTransaction(tx, orgId, actor);
     const [productSnap, warehouseSnap, locationSnap, sourceSnap] = await Promise.all([
       tx.get(productRef), tx.get(warehouseRef), tx.get(locationRef), tx.get(sourceRef),
     ]);
