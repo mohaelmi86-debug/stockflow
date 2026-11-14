@@ -278,9 +278,14 @@ try {
   await check('new organizations can be created on Starter with an owner in one batch', async () => {
     const db = dbFor('owner_alpha');
     const batch = writeBatch(db);
-    batch.set(doc(db, 'organizations', 'org_starter_created'), org('org_starter_created', 'owner_alpha', ['owner_alpha']));
+    batch.set(doc(db, 'organizations', 'org_starter_created'), {
+      ...org('org_starter_created', 'owner_alpha', ['owner_alpha']),
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
     batch.set(doc(db, 'organizations', 'org_starter_created', 'members', 'owner_alpha'), {
       ...member('owner_alpha', 'org_starter_created', 'owner_alpha', 'owner'),
+      joinedAt: serverTimestamp(),
     });
     await assertSucceeds(batch.commit());
   });
