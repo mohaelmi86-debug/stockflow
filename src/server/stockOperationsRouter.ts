@@ -488,6 +488,80 @@ router.post('/receipt', wrap(async (req, res) => {
   res.json({ ok: true, reference: receiptRef });
 }));
 
+router.post('/demo-seed', wrap(async (req, res) => {
+  const actor = actorFrom(req);
+  const orgId = text(req.body?.orgId, 'Organisation');
+  const { org } = await authorizeOrg(orgId, actor);
+  const memberRole = await adminDb.doc(`organizations/${orgId}/members/${actor.uid}`).get();
+  if (!['owner', 'admin'].includes(String(memberRole.data()?.role))) throw new Error('Seul un propriétaire ou administrateur peut initialiser les stocks de démonstration.');
+  if (org.isDemoSeeded !== true) throw new Error('Cette organisation ne dispose pas du catalogue de démonstration.');
+  const seed = [
+    { productId: 'prod_cap_01', warehouseId: 'wh_paris', locationId: 'loc_par_a1', quantity: 94 },
+    { productId: 'prod_plc_02', warehouseId: 'wh_paris', locationId: 'loc_par_a2', quantity: 6 },
+    { productId: 'prod_roul_03', warehouseId: 'wh_lyon', locationId: 'loc_lyo_a1', quantity: 165 },
+    { productId: 'prod_ver_04', warehouseId: 'wh_paris', locationId: 'loc_par_a1', quantity: 0 },
+    { productId: 'prod_cart_05', warehouseId: 'wh_paris', locationId: 'loc_par_pick', quantity: 112 },
+    { productId: 'prod_film_06', warehouseId: 'wh_lyon', locationId: 'loc_lyo_a1', quantity: 22 },
+  ];
+  const orgRef = adminDb.doc(`organizations/${orgId}`);
+  await adminDb.runTransaction(async (tx) => {
+    const orgSnap = await tx.get(orgRef);
+    if (!orgSnap.exists || orgSnap.data()!.isDemoSeeded !== true) throw new Error('Organisation de démonstration introuvable.');
+    if (orgSnap.data()!.demoStockSeededAt) return;
+    const refs = seed.map((item) => ({
+      ...item,
+      productRef: adminDb.doc(`organizations/${orgId}/products/${item.productId}`),
+      warehouseRef: adminDb.doc(`organizations/${orgId}/warehouses/${item.warehouseId}`),
+      locationRef: adminDb.doc(`organizations/${orgId}/locations/${item.locationId}`),
+      balanceRef: adminDb.doc(`organizations/${orgId}/stockBalances/${item.productId}_${item.warehouseId}_${item.locationId}`),
+    }));
+    const allRefs = refs.flatMap((item) => [item.productRef, item.warehouseRef, item.locationRef, item.balanceRef]);
+    const snapshots = await Promise.all(allRefs.map((ref) => tx.get(ref)));
+    const snapMap = new Map(allRefs.map((ref, index) => [ref.path, snapshots[index]]));
+    for (const item of refs) {
+      if (!snapMap.get(item.productRef.path)!.exists || !snapMap.get(item.warehouseRef.path)!.exists || !snapMap.get(item.locationRef.path)!.exists) {
+        throw new Error('Le catalogue de démonstration est incomplet; initialisation des stocks annulée.');
+      }
+      if (snapMap.get(item.balanceRef.path)!.exists) throw new Error('Un solde de démonstration existe déjà; aucune initialisation partielle ne sera écrasée.');
+    }
+    const memberUids = Array.isArray(orgSnap.data()!.memberUids) ? orgSnap.data()!.memberUids.slice(0, 50) : [actor.uid];
+    for (const item of refs) {
+      const product = snapMap.get(item.productRef.path)!.data()!;
+      const warehouse = snapMap.get(item.warehouseRef.path)!.data()!;
+      const location = snapMap.get(item.locationRef.path)!.data()!;
+      if (location.warehouseId !== item.warehouseId) throw new Error('Emplacement de démonstration rattaché au mauvais entrepôt.');
+      const movementId = item.quantity > 0 ? id('mvt') : undefined;
+      tx.create(item.balanceRef, {
+        id: item.balanceRef.id, orgId, productId: product.id, productSku: product.sku, productName: product.name,
+        warehouseId: warehouse.id, warehouseName: warehouse.name,
+        locationId: location.id, locationCode: location.code,
+        physicalQty: item.quantity, reservedQty: 0, onOrderQty: 0, inTransitQty: 0,
+        availableQty: item.quantity, unitCost: Number(product.purchasePrice ?? 0),
+        ...(movementId ? { lastMovementId: movementId } : {}),
+        memberUids, updatedAt: FieldValue.serverTimestamp(),
+      });
+      if (movementId) {
+        tx.create(adminDb.doc(`organizations/${orgId}/stockMovements/${movementId}`), {
+          id: movementId, orgId,
+          reference: `MVT-DEMO-${String(product.sku).slice(0, 48)}`,
+          movementType: 'IN', productId: product.id, productSku: product.sku, productName: product.name,
+          warehouseId: warehouse.id, warehouseName: warehouse.name, locationId: location.id, locationCode: location.code,
+          quantity: item.quantity, unitCost: Number(product.purchasePrice ?? 0),
+          reason: 'Stock initial de démonstration (moteur Stock Engine v2)',
+          sourceDocumentType: 'Initialisation Démo', sourceDocumentRef: 'INIT-DEMO-02',
+          performedByUid: actor.uid, performedByName: actor.displayName,
+          isDemo: true, memberUids, createdAt: FieldValue.serverTimestamp(),
+        });
+      }
+    }
+    tx.update(orgRef, { demoStockSeededAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
+    const log = auditPayload(orgId, actor, 'DEMO_STOCK_INITIALIZED', 'stock_initialization', orgId,
+      'Initialisation des stocks de démonstration sans réservations artificielles', memberUids);
+    tx.create(log.ref, log.data);
+  });
+  res.json({ ok: true });
+}));
+
 router.post('/movement', wrap(async (req, res) => {
   const actor = actorFrom(req);
   const orgId = text(req.body?.orgId, 'Organisation');
