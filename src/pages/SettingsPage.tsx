@@ -1218,6 +1218,30 @@ export function SettingsPage() {
         </div>
       )}
 
+      {tab === 'branding' && (
+        <section className="rounded-xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
+          <div className="mb-5 flex items-start justify-between gap-4">
+            <div><h2 className="text-base font-semibold text-slate-900 dark:text-white">Identité visuelle & marque blanche</h2><p className="mt-1 text-xs text-slate-500">Configurez l'identité de votre organisation.</p></div>
+            <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">Par organisation</span>
+          </div>
+          {!isAdmin ? <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Lecture seule : seul un administrateur peut modifier la marque.</p> : <form className="grid gap-5 lg:grid-cols-2" onSubmit={async e=>{e.preventDefault();if(!activeOrg||!user)return;setBrandingSaving(true);try{await saveOrganizationBranding(activeOrg.id,user.uid,brandingDraft);await refreshBranding();toast({variant:'success',title:'Marque enregistrée'});}catch(error){toast({variant:'error',title:'Erreur de sauvegarde',description:error instanceof Error?error.message:'Erreur inconnue'});}finally{setBrandingSaving(false);}}}>
+            <div className="space-y-4">
+              <div><label className="mb-1 block text-xs font-medium">Mode</label><select value={brandingDraft.mode} onChange={e=>setBrandingDraft(d=>({...d,mode:e.target.value as BrandingMode,showStockFlow:e.target.value!=='whitelabel'}))} className="w-full rounded-lg border px-3 py-2 text-sm dark:bg-slate-950"><option value="stockflow">StockFlow</option><option value="cobrand">Co-branding partenaire</option><option value="whitelabel">Marque blanche</option></select></div>
+              <div><label className="mb-1 block text-xs font-medium">Nom de marque</label><input required maxLength={80} value={brandingDraft.brandName} onChange={e=>setBrandingDraft(d=>({...d,brandName:e.target.value}))} className="w-full rounded-lg border px-3 py-2 text-sm dark:bg-slate-950"/></div>
+              <div><label className="mb-1 block text-xs font-medium">Logo URL (ou import ci-dessous)</label><input type="url" maxLength={2048} value={brandingDraft.logoUrl.startsWith('/')?'':brandingDraft.logoUrl} onChange={e=>setBrandingDraft(d=>({...d,logoUrl:e.target.value||'/stockflow-logo.svg'}))} placeholder="https://..." className="w-full rounded-lg border px-3 py-2 text-sm dark:bg-slate-950"/>
+                <label className="mt-2 inline-flex cursor-pointer rounded-lg border px-3 py-2 text-xs font-medium hover:bg-slate-50">Importer un logo<input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" className="sr-only" onChange={async e=>{const file=e.target.files?.[0];if(!file||!activeOrg)return;try{const url=await uploadOrganizationLogo(activeOrg.id,file);setBrandingDraft(d=>({...d,logoUrl:url}));toast({variant:'success',title:'Logo importé',description:'Enregistrez ensuite la marque.'});}catch(error){toast({variant:'error',title:'Upload impossible',description:error instanceof Error?error.message:'Erreur Storage'});}finally{e.currentTarget.value='';}}}/></label>
+              </div>
+              <div className="grid grid-cols-2 gap-3"><div><label className="mb-1 block text-xs font-medium">Couleur primaire</label><input type="color" value={brandingDraft.primaryColor} onChange={e=>setBrandingDraft(d=>({...d,primaryColor:e.target.value}))} className="h-10 w-full"/></div><div><label className="mb-1 block text-xs font-medium">Accent</label><input type="color" value={brandingDraft.accentColor} onChange={e=>setBrandingDraft(d=>({...d,accentColor:e.target.value}))} className="h-10 w-full"/></div></div>
+              <div><label className="mb-1 block text-xs font-medium">Email support</label><input type="email" maxLength={254} value={brandingDraft.supportEmail} onChange={e=>setBrandingDraft(d=>({...d,supportEmail:e.target.value}))} className="w-full rounded-lg border px-3 py-2 text-sm dark:bg-slate-950"/></div>
+              <div><label className="mb-1 block text-xs font-medium">Pied de page</label><input maxLength={180} value={brandingDraft.footerText} onChange={e=>setBrandingDraft(d=>({...d,footerText:e.target.value}))} className="w-full rounded-lg border px-3 py-2 text-sm dark:bg-slate-950"/></div>
+              <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={brandingDraft.showStockFlow} onChange={e=>setBrandingDraft(d=>({...d,showStockFlow:e.target.checked}))}/> Afficher « Propulsé par StockFlow »</label>
+              <div className="flex gap-2"><Button type="button" variant="outline" onClick={()=>setBrandingDraft({...branding})}>Réinitialiser</Button><Button type="submit" disabled={brandingSaving}>{brandingSaving?'Sauvegarde…':'Enregistrer'}</Button></div>
+            </div>
+            <div className="rounded-xl bg-slate-950 p-5 text-white"><div className="rounded-lg bg-white p-3"><img src={brandingDraft.logoUrl||'/stockflow-logo.svg'} alt="Logo" className="mx-auto h-14 max-w-full object-contain" onError={e=>{e.currentTarget.src='/stockflow-logo.svg';}}/></div><h3 className="mt-5 text-center text-xl font-semibold">{brandingDraft.brandName}</h3><p className="mt-1 text-center text-xs text-slate-300">{brandingDraft.mode==='whitelabel'?'Votre environnement ERP':brandingDraft.mode==='cobrand'?'Votre partenaire · StockFlow':'StockFlow ERP'}</p><div className="mt-5 flex justify-center gap-2"><span className="rounded px-3 py-1 text-xs text-white" style={{backgroundColor:brandingDraft.primaryColor}}>Primaire</span><span className="rounded px-3 py-1 text-xs text-white" style={{backgroundColor:brandingDraft.accentColor}}>Accent</span></div>{brandingDraft.showStockFlow&&<p className="mt-3 text-center text-[10px] text-slate-400">Propulsé par StockFlow ERP</p>}</div>
+          </form>}
+        </section>
+      )}
+      
       {tab === 'security' && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
