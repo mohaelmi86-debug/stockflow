@@ -1,5 +1,6 @@
 import type { ButtonHTMLAttributes } from 'react';
 import { cn } from '../../lib/cn.ts';
+import { useBranding } from '../../contexts/BrandingContext.tsx';
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger';
@@ -14,6 +15,7 @@ export function Button({
   children,
   ...props
 }: ButtonProps) {
+  const { branding } = useBranding();
   return (
     <button
       disabled={disabled}
@@ -23,7 +25,7 @@ export function Button({
         size === 'md' && 'h-10 px-4 text-sm',
         size === 'lg' && 'h-11 px-5 text-sm',
         variant === 'primary' &&
-          'bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800 shadow-xs',
+          'text-white hover:brightness-95 active:brightness-90 shadow-xs',
         variant === 'secondary' &&
           'bg-slate-900 text-white hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-200',
         variant === 'outline' &&
@@ -34,6 +36,7 @@ export function Button({
           'bg-red-600 text-white hover:bg-red-700 active:bg-red-800',
         className
       )}
+      style={variant === 'primary' ? { backgroundColor: branding.primaryColor } : undefined}
       {...props}
     >
       {children}
