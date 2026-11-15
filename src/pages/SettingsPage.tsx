@@ -21,6 +21,7 @@ import {
 import { useAuth } from '../contexts/AuthContext.tsx';
 import { useBranding } from '../contexts/BrandingContext.tsx';
 import { saveOrganizationBranding } from '../services/brandingService.ts';
+import { uploadOrganizationLogo } from '../services/brandingStorageService.ts';
 import { DEFAULT_BRANDING, type BrandingMode } from '../shared/branding.ts';
 import { useToast } from '../contexts/ToastContext.tsx';
 import { useErpData } from '../hooks/useErpData.ts';
@@ -701,7 +702,7 @@ export function SettingsPage() {
                 <div>
                   <label className="block text-xs font-medium text-slate-700 dark:text-slate-200">URL du logo (HTTPS ou chemin public)</label>
                   <input maxLength={2048} type="url" value={brandingDraft.logoUrl.startsWith('/') ? '' : brandingDraft.logoUrl} onChange={e => setBrandingDraft(d => ({ ...d, logoUrl: e.target.value || '/stockflow-logo.svg' }))} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950" placeholder="https://.../logo.png"/>
-                  <p className="mt-1 text-[11px] text-slate-500">Le téléversement Firebase Storage sera ajouté ensuite. Cette version accepte une URL HTTPS.</p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2"><label className="inline-flex cursor-pointer items-center rounded-lg border px-3 py-2 text-xs font-medium hover:bg-slate-50 dark:hover:bg-slate-800">Importer un logo (2 Mo max.)<input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" className="sr-only" onChange={async e => { const file=e.target.files?.[0]; if(!file || !activeOrg) return; try { const url=await uploadOrganizationLogo(activeOrg.id,file); setBrandingDraft(d=>({...d,logoUrl:url})); toast({variant:'success',title:'Logo téléversé',description:'Pensez à enregistrer la marque.'}); } catch(error){toast({variant:'error',title:'Upload du logo impossible',description:error instanceof Error?error.message:'Erreur Storage'});} finally {e.currentTarget.value='';} }}/></label>{brandingDraft.logoUrl && <img src={brandingDraft.logoUrl} alt="Logo importé" className="h-10 max-w-28 rounded border bg-white p-1 object-contain"/>}</div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div><label className="block text-xs font-medium">Couleur principale</label><div className="mt-1 flex gap-2"><input type="color" value={brandingDraft.primaryColor} onChange={e => setBrandingDraft(d => ({ ...d, primaryColor: e.target.value }))} className="h-10 w-12 rounded border"/><input value={brandingDraft.primaryColor} onChange={e => setBrandingDraft(d => ({ ...d, primaryColor: e.target.value }))} className="min-w-0 flex-1 rounded-lg border px-2 text-sm dark:bg-slate-950"/></div></div>
