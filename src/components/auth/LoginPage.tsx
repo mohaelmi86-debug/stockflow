@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import { ShieldCheck, ArrowRightLeft, Building2 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext.tsx';
+import { useBranding } from '../../contexts/BrandingContext.tsx';
 import { Button } from '../ui/Button.tsx';
 export function LoginPage() {
+ const { branding } = useBranding();
  const {signInWithGoogle,authError}=useAuth(); const [submitting,setSubmitting]=useState(false);
  const handleLogin=async()=>{setSubmitting(true);try{await signInWithGoogle()}catch{/* Error surfaced via authError */}finally{setSubmitting(false)}};
  return <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col lg:flex-row">
  <div className="lg:w-[46%] bg-slate-900 text-slate-100 p-8 sm:p-12 lg:p-16 flex flex-col justify-between border-b lg:border-b-0 lg:border-r border-slate-800"><div>
- <img src="/stockflow-logo.svg" alt="StockFlow ERP" className="h-16 w-full max-w-[270px] object-contain object-left"/>
+ {branding.mode === 'stockflow' || !branding.logoUrl ? <img src="/stockflow-logo.svg" alt="StockFlow ERP" className="h-16 w-full max-w-[270px] rounded-md bg-white px-3 object-contain object-left"/> : <div className="inline-flex items-center gap-3 rounded-lg bg-white p-3"><img src={branding.logoUrl} alt={branding.brandName} className="h-12 max-w-[150px] object-contain"/><span className="font-semibold text-slate-900">{branding.brandName}</span>{branding.showStockFlow && <span className="text-xs text-slate-500">with StockFlow</span>}</div>}
  <h1 className="mt-12 font-display text-3xl sm:text-4xl font-bold tracking-tight text-white max-w-md text-balance">Pilotage des stocks, entrepôts et opérations commerciales.</h1>
  <p className="mt-4 text-sm sm:text-base text-slate-300 max-w-md leading-relaxed">Plateforme ERP multi-entreprises conçue pour la traçabilité intégrale des mouvements de stock, la gestion multi-entrepôts et le contrôle d’accès par organisation.</p></div>
  <div className="mt-12 space-y-5 border-t border-slate-800 pt-8">
