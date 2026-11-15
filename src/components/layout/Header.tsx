@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext.tsx';
 import { useTheme } from '../../contexts/ThemeContext.tsx';
+import { useBranding } from '../../contexts/BrandingContext.tsx';
 import { useErpData } from '../../hooks/useErpData.ts';
 import { markNotificationRead } from '../../services/erpService.ts';
 import { formatDateTime } from '../../shared/formatters.ts';
@@ -29,6 +30,7 @@ export function Header({ onOpenMobileMenu, onOpenNewOrg, onOpenHelp }: HeaderPro
   const navigate = useNavigate();
   const { user, memberships, activeOrg, activeRole, selectOrganization, signOut } = useAuth();
   const { theme, toggleTheme } = useTheme();
+  const { branding } = useBranding();
   const {
     products,
     warehouses,
@@ -173,6 +175,7 @@ export function Header({ onOpenMobileMenu, onOpenNewOrg, onOpenHelp }: HeaderPro
 
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-4 border-b border-slate-200 bg-white px-4 sm:px-6 dark:border-slate-800 dark:bg-slate-900">
+      <div className="flex shrink-0 items-center gap-2 pr-1"><div className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-md bg-white"><img src={branding.logoUrl||'/stockflow-logo.svg'} alt="" className="h-full w-full object-contain p-0.5" onError={e=>{e.currentTarget.src='/stockflow-logo.svg';}}/></div><div className="hidden min-w-0 sm:block"><p className="max-w-36 truncate text-sm font-semibold text-slate-800 dark:text-slate-100">{branding.mode==='stockflow'?'StockFlow':branding.brandName}</p>{branding.mode==='cobrand'&&branding.showStockFlow&&<p className="text-[10px] text-slate-500">avec StockFlow</p>}</div></div>
       {/* Left: Mobile toggle + Global Search */}
       <div className="flex items-center gap-3 flex-1 min-w-0 max-w-xl">
         <button
