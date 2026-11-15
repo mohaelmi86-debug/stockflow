@@ -4,6 +4,7 @@ import {
   Truck, TrendingUp, Users, FileText, CreditCard, BarChart3, Bot, Settings, X,
 } from 'lucide-react';
 import { cn } from '../../lib/cn.ts';
+import { useBranding } from '../../contexts/BrandingContext.tsx';
 
 export interface NavItem { to: string; label: string; icon: typeof LayoutDashboard; phase?: string; }
 export const NAV_ITEMS: NavItem[] = [
@@ -17,9 +18,10 @@ export const NAV_ITEMS: NavItem[] = [
 ];
 interface SidebarProps { mobileOpen: boolean; onCloseMobile: () => void; }
 export function Sidebar({ mobileOpen, onCloseMobile }: SidebarProps) {
+  const { branding } = useBranding();
   const navContent = <div className="flex h-full flex-col bg-slate-900 text-slate-100 select-none">
     <div className="flex h-20 items-center justify-between border-b border-slate-800 px-4 shrink-0">
-      <img src="/stockflow-logo.svg" alt="StockFlow ERP" className="h-14 w-full max-w-[218px] object-contain object-left" />
+      {branding.mode === 'stockflow' || !branding.logoUrl ? <img src="/stockflow-logo.svg" alt="StockFlow ERP" className="h-14 w-full max-w-[218px] rounded-md bg-white px-2 object-contain object-left" /> : <div className="flex items-center gap-2 rounded-md bg-white px-2 py-2 max-w-[218px]"><img src={branding.logoUrl} alt={branding.brandName} className="h-9 max-w-[92px] object-contain" /><span className="truncate text-sm font-semibold text-slate-900">{branding.brandName}</span>{branding.showStockFlow && <span className="text-[10px] text-slate-500">with StockFlow</span>}</div>}
       <button type="button" onClick={onCloseMobile} aria-label="Fermer le menu" className="lg:hidden rounded-md p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"><X className="h-5 w-5" /></button>
     </div>
     <nav aria-label="Navigation principale" className="flex-1 overflow-y-auto px-3 py-4 space-y-0.5">
