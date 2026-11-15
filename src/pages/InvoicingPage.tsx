@@ -14,6 +14,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext.tsx';
+import { useBranding } from '../contexts/BrandingContext.tsx';
 import { useToast } from '../contexts/ToastContext.tsx';
 import { useErpData } from '../hooks/useErpData.ts';
 import {
@@ -55,6 +56,7 @@ export function InvoicingPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { user, activeOrg } = useAuth();
+  const { branding } = useBranding();
   const { toast } = useToast();
   const {
     products,
@@ -902,10 +904,13 @@ export function InvoicingPage() {
         {printInvoiceTarget && (
           <div className="space-y-5 text-sm">
             <div className="flex flex-col sm:flex-row sm:justify-between gap-4 border-b border-slate-200 pb-4 dark:border-slate-800">
-              <div>
+              <div className="flex items-start gap-3">
+                <div className="flex h-12 w-20 shrink-0 items-center justify-center rounded bg-white p-1 print:border-0"><img src={branding.logoUrl || '/stockflow-logo.svg'} alt={branding.brandName} className="max-h-full max-w-full object-contain" onError={e=>{e.currentTarget.src='/stockflow-logo.svg';}}/></div>
+                <div>
                 <p className="font-display text-lg font-bold text-slate-900 dark:text-white">
                   {activeOrg?.name}
                 </p>
+                {branding.mode !== 'stockflow' && <p className="text-xs font-medium" style={{color:branding.primaryColor}}>{branding.brandName}{branding.showStockFlow?' · StockFlow':''}</p>}
                 <p className="text-xs text-slate-500">{activeOrg?.country || 'France'}</p>
                 {activeOrg?.siret && (
                   <p className="font-mono text-xs text-slate-600 dark:text-slate-400">
@@ -917,6 +922,7 @@ export function InvoicingPage() {
                     TVA intracommunautaire : {activeOrg.vatNumber}
                   </p>
                 )}
+                </div>
               </div>
               <div className="sm:text-right">
                 <p className="text-xs uppercase tracking-wider text-slate-500">
@@ -1051,6 +1057,7 @@ export function InvoicingPage() {
               </div>
             </div>
 
+            {branding.footerText && <p className="text-center text-[10px] text-slate-500">{branding.footerText}</p>}
             <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3 text-[11px] leading-relaxed text-slate-600 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400">
               <p>
                 <strong>Mentions légales obligatoires :</strong> En cas de retard de paiement, une
