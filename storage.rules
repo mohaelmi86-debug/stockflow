@@ -1,0 +1,17 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() { return request.auth != null; }
+    function orgMember(orgId) {
+      return signedIn() && firestore.exists(/databases/(default)/documents/organizations/$(orgId)/members/$(request.auth.uid));
+    }
+    function orgAdmin(orgId) {
+      return orgMember(orgId) && firestore.get(/databases/(default)/documents/organizations/$(orgId)/members/$(request.auth.uid)).data.role in ['owner', 'admin'];
+    }
+    match /organizations/{orgId}/branding/{fileName} {
+      allow read: if orgMember(orgId);
+      allow create, update: if orgAdmin(orgId) && request.resource.size <= 2 * 1024 * 1024 && request.resource.contentType.matches('image/(png|jpeg|webp|svg\\+xml)');
+      allow delete: if orgAdmin(orgId);
+    }
+  }
+}
