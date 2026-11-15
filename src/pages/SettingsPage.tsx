@@ -15,8 +15,13 @@ import {
   CheckCircle2,
   KeyRound,
   Search,
+  Palette,
+  Eye,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext.tsx';
+import { useBranding } from '../contexts/BrandingContext.tsx';
+import { saveOrganizationBranding } from '../services/brandingService.ts';
+import { DEFAULT_BRANDING, type BrandingMode } from '../shared/branding.ts';
 import { useToast } from '../contexts/ToastContext.tsx';
 import { useErpData } from '../hooks/useErpData.ts';
 import {
@@ -46,7 +51,7 @@ import { StatusText } from '../components/ui/StatusText.tsx';
 import { Modal } from '../components/ui/Modal.tsx';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog.tsx';
 
-type SettingsTab = 'general' | 'team' | 'plans' | 'audit' | 'security';
+type SettingsTab = 'general' | 'branding' | 'team' | 'plans' | 'audit' | 'security';
 
 interface BillingStatusResponse {
   stripeConfigured: boolean;
@@ -141,6 +146,9 @@ function QuotaProgressBar({ label, current, max }: { label: string; current: num
 export function SettingsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { user, activeOrg, activeRole, getIdToken, refreshWorkspace } = useAuth();
+  const { branding, refreshBranding } = useBranding();
+  const [brandingDraft, setBrandingDraft] = useState({ ...DEFAULT_BRANDING });
+  const [brandingSaving, setBrandingSaving] = useState(false);
   const { toast } = useToast();
   const {
     members,
@@ -154,7 +162,7 @@ export function SettingsPage() {
   } = useErpData();
 
   const resolveTabFromParam = (raw: string | null): SettingsTab => {
-    if (raw === 'team' || raw === 'plans' || raw === 'audit' || raw === 'security') return raw;
+    if (raw === 'branding' || raw === 'team' || raw === 'plans' || raw === 'audit' || raw === 'security') return raw;
     return 'general';
   };
 
@@ -181,6 +189,10 @@ export function SettingsPage() {
   const [auditActionFilter, setAuditActionFilter] = useState('ALL');
 
   const isAdmin = activeRole === 'owner' || activeRole === 'admin';
+
+  useEffect(() => {
+    setBrandingDraft({ ...branding });
+  }, [branding]);
 
   useEffect(() => {
     const paramTab = searchParams.get('tab');
@@ -624,6 +636,7 @@ export function SettingsPage() {
       <div className="flex flex-wrap items-center gap-1 rounded-xl border border-slate-200 bg-white p-1.5 w-fit dark:border-slate-800 dark:bg-slate-900">
         {[
           { id: 'general', label: 'Organisation', icon: Shield },
+          { id: 'branding', label: 'Identité visuelle', icon: Palette },
           { id: 'team', label: 'Équipe & RBAC', icon: Users },
           { id: 'plans', label: 'Abonnement & Stripe', icon: CreditCard },
           { id: 'audit', label: 'Journal d’audit', icon: History },
@@ -651,6 +664,71 @@ export function SettingsPage() {
           );
         })}
       </div>
+
+      
+      {tab === 'branding' && (
+        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-5">
+          <section className="rounded-xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
+            <div className="mb-5">
+              <h2 className="text-base font-semibold text-slate-900 dark:text-white">Identité visuelle & marque blanche</h2>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Personnalisez l’expérience de votre organisation. Seuls les propriétaires et administrateurs peuvent modifier ces paramètres.</p>
+            </div>
+            {!isAdmin ? <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Accès en lecture seule : demandez à un administrateur de modifier la marque.</div> : (
+              <form className="space-y-5" onSubmit={async (event) => {
+                event.preventDefault();
+                if (!activeOrg || !user) return;
+                setBrandingSaving(true);
+                try {
+                  await saveOrganizationBranding(activeOrg.id, user.uid, brandingDraft);
+                  await refreshBranding();
+                  toast({ variant: 'success', title: 'Identité visuelle enregistrée', description: 'La marque est appliquée à votre espace.' });
+                } catch (error) {
+                  toast({ variant: 'error', title: 'Enregistrement impossible', description: error instanceof Error ? error.message : 'Erreur de sauvegarde.' });
+                } finally { setBrandingSaving(false); }
+              }}>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-200">Mode de marque</label>
+                  <select value={brandingDraft.mode} onChange={e => setBrandingDraft(d => ({ ...d, mode: e.target.value as BrandingMode, showStockFlow: e.target.value !== 'whitelabel' }))} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950">
+                    <option value="stockflow">StockFlow (marque standard)</option>
+                    <option value="cobrand">Co-branding (partenaire + StockFlow)</option>
+                    <option value="whitelabel">Marque blanche (votre marque)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-200">Nom affiché</label>
+                  <input maxLength={80} required value={brandingDraft.brandName} onChange={e => setBrandingDraft(d => ({ ...d, brandName: e.target.value }))} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950" placeholder="Ex. Mon ERP"/>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-200">URL du logo (HTTPS ou chemin public)</label>
+                  <input maxLength={2048} type="url" value={brandingDraft.logoUrl.startsWith('/') ? '' : brandingDraft.logoUrl} onChange={e => setBrandingDraft(d => ({ ...d, logoUrl: e.target.value || '/stockflow-logo.svg' }))} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950" placeholder="https://.../logo.png"/>
+                  <p className="mt-1 text-[11px] text-slate-500">Le téléversement Firebase Storage sera ajouté ensuite. Cette version accepte une URL HTTPS.</p>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div><label className="block text-xs font-medium">Couleur principale</label><div className="mt-1 flex gap-2"><input type="color" value={brandingDraft.primaryColor} onChange={e => setBrandingDraft(d => ({ ...d, primaryColor: e.target.value }))} className="h-10 w-12 rounded border"/><input value={brandingDraft.primaryColor} onChange={e => setBrandingDraft(d => ({ ...d, primaryColor: e.target.value }))} className="min-w-0 flex-1 rounded-lg border px-2 text-sm dark:bg-slate-950"/></div></div>
+                  <div><label className="block text-xs font-medium">Couleur d’accent</label><div className="mt-1 flex gap-2"><input type="color" value={brandingDraft.accentColor} onChange={e => setBrandingDraft(d => ({ ...d, accentColor: e.target.value }))} className="h-10 w-12 rounded border"/><input value={brandingDraft.accentColor} onChange={e => setBrandingDraft(d => ({ ...d, accentColor: e.target.value }))} className="min-w-0 flex-1 rounded-lg border px-2 text-sm dark:bg-slate-950"/></div></div>
+                </div>
+                <div><label className="block text-xs font-medium">E-mail support</label><input type="email" maxLength={254} value={brandingDraft.supportEmail} onChange={e => setBrandingDraft(d => ({ ...d, supportEmail: e.target.value }))} className="mt-1 w-full rounded-lg border px-3 py-2 text-sm dark:bg-slate-950" placeholder="support@entreprise.fr"/></div>
+                <div><label className="block text-xs font-medium">Texte de pied de page</label><input maxLength={180} value={brandingDraft.footerText} onChange={e => setBrandingDraft(d => ({ ...d, footerText: e.target.value }))} className="mt-1 w-full rounded-lg border px-3 py-2 text-sm dark:bg-slate-950"/></div>
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={brandingDraft.showStockFlow} onChange={e => setBrandingDraft(d => ({ ...d, showStockFlow: e.target.checked }))}/> Afficher « Propulsé par StockFlow »</label>
+                <div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setBrandingDraft({ ...branding })}>Annuler</Button><Button type="submit" disabled={brandingSaving}>{brandingSaving ? 'Enregistrement…' : 'Enregistrer la marque'}</Button></div>
+              </form>
+            )}
+          </section>
+          <aside className="space-y-4">
+            <section className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+              <div className="mb-3 flex items-center gap-2 text-sm font-semibold"><Eye className="h-4 w-4"/> Aperçu</div>
+              <div className="rounded-xl border bg-slate-950 p-4">
+                <div className="rounded-lg bg-white p-3"><img src={brandingDraft.logoUrl || '/stockflow-logo.svg'} alt={brandingDraft.brandName} className="mx-auto h-12 max-w-full object-contain" onError={e => { e.currentTarget.src='/stockflow-logo.svg'; }}/></div>
+                <div className="mt-4 text-center text-white"><div className="text-lg font-semibold">{brandingDraft.brandName}</div><div className="mt-1 text-xs text-slate-300">{brandingDraft.mode === 'whitelabel' ? 'Votre environnement ERP' : brandingDraft.mode === 'cobrand' ? 'Votre partenaire ERP · StockFlow' : 'StockFlow ERP'}</div></div>
+                <div className="mt-4 flex justify-center gap-2"><span className="rounded px-3 py-1 text-xs text-white" style={{backgroundColor:brandingDraft.primaryColor}}>Principal</span><span className="rounded px-3 py-1 text-xs text-white" style={{backgroundColor:brandingDraft.accentColor}}>Accent</span></div>
+                {brandingDraft.showStockFlow && <p className="mt-3 text-center text-[10px] text-slate-400">Propulsé par StockFlow ERP</p>}
+              </div>
+              <p className="mt-2 text-[11px] text-slate-500">Aperçu indicatif de la connexion et de l’identité partenaire.</p>
+            </section>
+            <section className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-xs text-blue-900 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-200"><strong>À savoir</strong><ul className="mt-2 list-disc space-y-1 pl-4"><li>La marque est isolée par organisation.</li><li>Le co-branding conserve la mention StockFlow.</li><li>La marque blanche masque cette mention.</li><li>Les domaines personnalisés et emails sont à venir.</li></ul></section>
+          </aside>
+        </div>
+      )}
 
       {tab === 'general' && (
         <div className="max-w-2xl rounded-xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
