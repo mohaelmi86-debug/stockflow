@@ -26,7 +26,7 @@ export function Sidebar({ mobileOpen, onCloseMobile }: SidebarProps) {
     </div>
     <nav aria-label="Navigation principale" className="flex-1 overflow-y-auto px-3 py-4 space-y-0.5">
       {NAV_ITEMS.map(item => { const Icon = item.icon; return <NavLink key={item.to} to={item.to} end={item.to === '/'} onClick={onCloseMobile}
-        className={({isActive}) => cn('group flex items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors duration-150 whitespace-nowrap', isActive ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white')}>
+        className={({isActive}) => cn('group flex items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors duration-150 whitespace-nowrap', isActive ? 'text-white' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white')}>
         {({isActive}) => <><span className="flex items-center gap-3 min-w-0"><Icon className={cn('h-4 w-4 shrink-0',isActive?'text-white':'text-slate-400 group-hover:text-slate-200')}/><span className="truncate">{item.label}</span></span>{item.phase && <span className={cn('text-[11px] font-mono shrink-0',isActive?'text-blue-100':'text-slate-500')}>{item.phase}</span>}</>}
       </NavLink>; })}
     </nav></div>;
