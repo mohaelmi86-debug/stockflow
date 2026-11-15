@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useAuth } from './AuthContext.tsx';
 import { DEFAULT_BRANDING, type OrganizationBranding } from '../shared/branding.ts';
 import { getOrganizationBranding } from '../services/brandingService.ts';
@@ -15,29 +15,33 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
   const [branding, setBranding] = useState<OrganizationBranding>({ orgId: '', ...DEFAULT_BRANDING });
   const [loadingBranding, setLoadingBranding] = useState(false);
 
-  const refreshBranding = async () => {
-    if (!activeOrg?.id) {
+  const refreshBranding = useCallback(async () => {
+    const orgId = activeOrg?.id;
+    if (!orgId) {
       setBranding({ orgId: '', ...DEFAULT_BRANDING });
+      setLoadingBranding(false);
       return;
     }
     setLoadingBranding(true);
     try {
-      setBranding(await getOrganizationBranding(activeOrg.id));
+      const loaded = await getOrganizationBranding(orgId);
+      // Avoid applying a late response after the user switches organization.
+      setBranding(current => current.orgId === orgId || current.orgId === '' ? loaded : current);
     } catch (error) {
       console.error('Impossible de charger la marque de l’organisation:', error);
-      setBranding({ orgId: activeOrg.id, ...DEFAULT_BRANDING });
+      setBranding(current => current.orgId === orgId ? { orgId, ...DEFAULT_BRANDING } : current);
     } finally {
       setLoadingBranding(false);
     }
-  };
+  }, [activeOrg?.id]);
 
-  useEffect(() => { void refreshBranding(); }, [activeOrg?.id]);
+  useEffect(() => { void refreshBranding(); }, [refreshBranding]);
   useEffect(() => {
     document.documentElement.style.setProperty('--brand-primary', branding.primaryColor);
     document.documentElement.style.setProperty('--brand-accent', branding.accentColor);
   }, [branding.primaryColor, branding.accentColor]);
 
-  const value = useMemo(() => ({ branding, loadingBranding, refreshBranding }), [branding, loadingBranding]);
+  const value = useMemo(() => ({ branding, loadingBranding, refreshBranding }), [branding, loadingBranding, refreshBranding]);
   return <BrandingContext.Provider value={value}>{children}</BrandingContext.Provider>;
 }
 
