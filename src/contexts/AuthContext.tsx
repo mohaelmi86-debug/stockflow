@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -49,8 +50,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [memberships, setMemberships] = useState<UserMembership[]>([]);
   const [activeOrg, setActiveOrg] = useState<Organization | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
+  const workspaceRequest = useRef(0);
 
   const loadWorkspaceForUser = useCallback(async (currentUser: User, preferredOrgId?: string) => {
+    const requestId = ++workspaceRequest.current;
     setLoadingWorkspace(true);
     setAuthError(null);
     try {
@@ -58,6 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const userSnap = await getDoc(doc(db, 'users', currentUser.uid));
       const profile = userSnap.exists() ? (userSnap.data() as UserProfile) : null;
       const userMemberships = await listUserMemberships(currentUser.uid);
+      if (requestId !== workspaceRequest.current) return;
       setMemberships(userMemberships);
 
       if (userMemberships.length === 0) {
@@ -73,27 +77,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             : userMemberships[0].orgId;
 
       const org = await getOrganization(targetOrgId);
-      setActiveOrg(org);
+      if (requestId === workspaceRequest.current) setActiveOrg(org);
     } catch (err) {
+      if (requestId !== workspaceRequest.current) return;
       console.error('Failed to load workspace:', err);
       setAuthError(err instanceof Error ? err.message : 'Impossible de charger votre espace entreprise.');
     } finally {
-      setLoadingWorkspace(false);
+      if (requestId === workspaceRequest.current) setLoadingWorkspace(false);
     }
   }, []);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (nextUser) => {
+      // Invalidate requests from a previous login/session immediately.
+      ++workspaceRequest.current;
       setUser(nextUser);
       if (nextUser) {
         await loadWorkspaceForUser(nextUser);
       } else {
+        setLoadingWorkspace(false);
+        setAuthError(null);
         setMemberships([]);
         setActiveOrg(null);
       }
       setAuthReady(true);
     });
-    return () => unsubscribe();
+    return () => {
+      ++workspaceRequest.current;
+      unsubscribe();
+    };
   }, [loadWorkspaceForUser]);
 
   const signInWithGoogle = useCallback(async () => {
@@ -108,7 +120,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
+    ++workspaceRequest.current;
     await firebaseSignOut(auth);
+    setLoadingWorkspace(false);
     setMemberships([]);
     setActiveOrg(null);
   }, []);
