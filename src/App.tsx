@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from './contexts/AuthContext.tsx';
 import { ThemeProvider } from './contexts/ThemeContext.tsx';
+import { BrandingProvider } from './contexts/BrandingContext.tsx';
 import { ToastProvider } from './contexts/ToastContext.tsx';
 import { LoginPage } from './components/auth/LoginPage.tsx';
 import { OnboardingPage } from './components/auth/OnboardingPage.tsx';
@@ -85,9 +86,11 @@ export default function App() {
       <ThemeProvider>
         <ToastProvider>
           <AuthProvider>
+            <BrandingProvider>
             <BrowserRouter>
               <AppShell />
             </BrowserRouter>
+            </BrandingProvider>
           </AuthProvider>
         </ToastProvider>
       </ThemeProvider>
