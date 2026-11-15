@@ -820,6 +820,981 @@ service cloud.firestore {
         allow delete: if isVerifiedUser() && isValidId(orgId) && isValidId(categoryId) && isOrgAdmin(orgId);
       }
 
+      match /settings/{settingId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(settingId) && isOrgMember(orgId);
+        allow list: if false;
+        allow create, update: if isVerifiedUser()
+          && isValidId(orgId)
+          && settingId == 'branding'
+          && isOrgAdmin(orgId)
+          && request.resource.data.orgId == orgId
+          && request.resource.data.keys().hasOnly([
+            'orgId', 'mode', 'brandName', 'logoUrl', 'primaryColor', 'accentColor',
+            'supportEmail', 'footerText', 'showStockFlow', 'updatedAt', 'updatedBy'
+          ])
+          && request.resource.data.mode in ['stockflow', 'cobrand', 'whitelabel']
+          && request.resource.data.brandName is string
+          && request.resource.data.brandName.size() > 0
+          && request.resource.data.brandName.size() <= 80
+          && request.resource.data.logoUrl is string
+          && request.resource.data.logoUrl.size() <= 2048
+          && request.resource.data.primaryColor.matches('^#[0-9A-Fa-f]{6}
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(productId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(productId)
+          && isOrgManager(orgId)
+          && isValidProduct(incoming(), orgId)
+          && incoming().id == productId
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(productId)
+          && isOrgManager(orgId)
+          && isValidProduct(incoming(), orgId)
+          && incoming().id == existing().id
+          && incoming().orgId == existing().orgId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'sku', 'barcode', 'name', 'description', 'categoryId', 'categoryName',
+            'brand', 'unit', 'purchasePrice', 'salePrice', 'vatRate',
+            'minStock', 'maxStock', 'status', 'trackBatches', 'trackSerials',
+            'trackExpiry', 'updatedAt'
+          ]);
+        allow delete: if isVerifiedUser() && isValidId(orgId) && isValidId(productId) && isOrgAdmin(orgId);
+      }
+
+      match /warehouses/{warehouseId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(warehouseId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(warehouseId)
+          && isOrgManager(orgId)
+          && isValidWarehouse(incoming(), orgId)
+          && incoming().id == warehouseId
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(warehouseId)
+          && isOrgManager(orgId)
+          && isValidWarehouse(incoming(), orgId)
+          && incoming().id == existing().id
+          && incoming().orgId == existing().orgId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'code', 'name', 'address', 'city', 'country', 'capacityUnits', 'isDefault', 'status', 'updatedAt'
+          ]);
+        allow delete: if isVerifiedUser() && isValidId(orgId) && isValidId(warehouseId) && isOrgAdmin(orgId);
+      }
+
+      match /locations/{locationId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(locationId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(locationId)
+          && isOrgManager(orgId)
+          && isValidLocation(incoming(), orgId)
+          && incoming().id == locationId
+          && incoming().createdAt == request.time;
+        allow update: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(locationId)
+          && isOrgManager(orgId)
+          && isValidLocation(incoming(), orgId)
+          && incoming().id == existing().id
+          && incoming().orgId == existing().orgId
+          && incoming().warehouseId == existing().warehouseId
+          && incoming().createdAt == existing().createdAt
+          && incoming().diff(existing()).affectedKeys().hasOnly(['code', 'zoneType', 'aisle', 'rack', 'level', 'capacity', 'status']);
+        allow delete: if isVerifiedUser() && isValidId(orgId) && isValidId(locationId) && isOrgAdmin(orgId);
+      }
+
+      match /stockBalances/{balanceId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(balanceId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(balanceId)
+          && isOrgOperator(orgId)
+          && isValidStockBalance(incoming(), orgId)
+          && incoming().id == balanceId
+          && incoming().updatedAt == request.time
+          && (incoming().physicalQty == 0 && !('lastMovementId' in incoming())
+            || isLinkedStockBalanceMovement(orgId, incoming(), incoming().physicalQty));
+        allow update: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(balanceId)
+          && isOrgOperator(orgId)
+          && isValidStockBalance(incoming(), orgId)
+          && incoming().id == existing().id
+          && incoming().orgId == existing().orgId
+          && incoming().productId == existing().productId
+          && incoming().warehouseId == existing().warehouseId
+          && incoming().locationId == existing().locationId
+          && incoming().updatedAt == request.time
+          && (incoming().physicalQty == existing().physicalQty && incoming().unitCost == existing().unitCost
+              && ((!('lastMovementId' in existing()) && !('lastMovementId' in incoming()))
+                || (('lastMovementId' in existing()) && incoming().lastMovementId == existing().lastMovementId))
+            || (incoming().lastMovementId is string
+              && (!('lastMovementId' in existing()) || incoming().lastMovementId != existing().lastMovementId)
+              && isLinkedStockBalanceMovement(orgId, incoming(), incoming().physicalQty - existing().physicalQty)))
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'productSku', 'productName', 'warehouseName', 'locationCode',
+            'physicalQty', 'reservedQty', 'onOrderQty', 'inTransitQty', 'availableQty', 'unitCost', 'lastMovementId', 'updatedAt'
+          ]);
+        allow delete: if false;
+      }
+
+      match /stockMovements/{movementId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(movementId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(movementId)
+          && isOrgOperator(orgId)
+          && isValidStockMovement(incoming(), orgId)
+          && incoming().id == movementId
+          && incoming().createdAt == request.time
+          && isMovementLinkedToBalances(orgId, incoming());
+        allow update, delete: if false;
+      }
+
+      match /auditLogs/{logId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(logId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(logId)
+          && isOrgMember(orgId)
+          && isValidAuditLog(incoming(), orgId)
+          && incoming().id == logId
+          && incoming().createdAt == request.time;
+        allow update, delete: if false;
+      }
+
+      match /notifications/{notificationId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(notificationId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(notificationId)
+          && isOrgOperator(orgId)
+          && isValidNotification(incoming(), orgId)
+          && incoming().id == notificationId
+          && incoming().createdAt == request.time;
+        allow update: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(notificationId)
+          && isOrgMember(orgId)
+          && isValidNotification(incoming(), orgId)
+          && incoming().id == existing().id
+          && incoming().orgId == existing().orgId
+          && incoming().createdAt == existing().createdAt
+          && incoming().diff(existing()).affectedKeys().hasOnly(['isRead']);
+        allow delete: if isVerifiedUser() && isValidId(orgId) && isValidId(notificationId) && isOrgAdmin(orgId);
+      }
+
+      match /suppliers/{supplierId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(supplierId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(supplierId)
+          && isOrgManager(orgId)
+          && isValidSupplier(incoming(), orgId)
+          && incoming().id == supplierId
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(supplierId)
+          && isOrgManager(orgId)
+          && isValidSupplier(incoming(), orgId)
+          && incoming().id == existing().id
+          && incoming().orgId == existing().orgId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'code', 'name', 'contactName', 'email', 'phone', 'address', 'city',
+            'country', 'siret', 'vatNumber', 'paymentTerms', 'leadTimeDays',
+            'rating', 'onTimeRate', 'status', 'notes', 'updatedAt'
+          ]);
+        allow delete: if isVerifiedUser() && isValidId(orgId) && isValidId(supplierId) && isOrgAdmin(orgId);
+      }
+
+      match /purchaseRequests/{requestId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(requestId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(requestId)
+          && isOrgOperator(orgId)
+          && isValidPurchaseRequest(incoming(), orgId)
+          && incoming().id == requestId
+          && incoming().requestedByUid == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(requestId)
+          && isOrgManager(orgId)
+          && isValidPurchaseRequest(incoming(), orgId)
+          && incoming().id == existing().id
+          && incoming().orgId == existing().orgId
+          && incoming().requestedByUid == existing().requestedByUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'title', 'priority', 'status', 'lines', 'rfqOffers', 'notes', 'convertedOrderId', 'updatedAt'
+          ]);
+        allow delete: if isVerifiedUser() && isValidId(orgId) && isValidId(requestId) && isOrgAdmin(orgId);
+      }
+
+      match /purchaseOrders/{orderId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(orderId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(orderId)
+          && isOrgManager(orgId)
+          && isValidPurchaseOrder(incoming(), orgId)
+          && incoming().id == orderId
+          && incoming().createdByUid == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(orderId)
+          && isOrgOperator(orgId)
+          && isValidPurchaseOrder(incoming(), orgId)
+          && incoming().id == existing().id
+          && incoming().orgId == existing().orgId
+          && incoming().createdByUid == existing().createdByUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && existing().status != 'closed'
+          && existing().status != 'canceled'
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'status', 'expectedDate', 'paymentTerms', 'shippingCost',
+            'subtotalHt', 'vatTotal', 'totalTtc', 'lines', 'notes', 'updatedAt'
+          ]);
+        allow delete: if false;
+      }
+
+      match /goodsReceipts/{receiptId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(receiptId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(receiptId)
+          && isOrgOperator(orgId)
+          && isValidGoodsReceipt(incoming(), orgId)
+          && incoming().id == receiptId
+          && incoming().createdAt == request.time;
+        allow update, delete: if false;
+      }
+
+      match /supplierInvoices/{invoiceId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(invoiceId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(invoiceId)
+          && isOrgManager(orgId)
+          && isValidSupplierInvoice(incoming(), orgId)
+          && incoming().id == invoiceId
+          && incoming().createdByUid == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(invoiceId)
+          && isOrgManager(orgId)
+          && isValidSupplierInvoice(incoming(), orgId)
+          && incoming().id == existing().id
+          && incoming().orgId == existing().orgId
+          && incoming().createdByUid == existing().createdByUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && existing().status != 'paid'
+          && incoming().diff(existing()).affectedKeys().hasOnly(['paidAmount', 'status', 'notes', 'updatedAt']);
+        allow delete: if false;
+      }
+
+      match /customers/{customerId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(customerId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(customerId)
+          && isOrgOperator(orgId)
+          && isValidCustomer(incoming(), orgId)
+          && incoming().id == customerId
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(customerId)
+          && isOrgOperator(orgId)
+          && isValidCustomer(incoming(), orgId)
+          && incoming().id == existing().id
+          && incoming().orgId == existing().orgId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'code', 'type', 'name', 'contactName', 'email', 'phone',
+            'billingAddress', 'shippingAddress', 'city', 'country',
+            'siret', 'vatNumber', 'paymentTerms', 'creditLimit',
+            'status', 'notes', 'updatedAt'
+          ]);
+        allow delete: if isVerifiedUser() && isValidId(orgId) && isValidId(customerId) && isOrgAdmin(orgId);
+      }
+
+      match /quotes/{quoteId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(quoteId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(quoteId)
+          && isOrgOperator(orgId)
+          && isValidQuote(incoming(), orgId)
+          && incoming().id == quoteId
+          && incoming().createdByUid == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(quoteId)
+          && isOrgOperator(orgId)
+          && isValidQuote(incoming(), orgId)
+          && incoming().id == existing().id
+          && incoming().orgId == existing().orgId
+          && incoming().createdByUid == existing().createdByUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && existing().status != 'converted'
+          && existing().status != 'rejected'
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'status', 'validUntil', 'paymentTerms', 'shippingCost',
+            'subtotalHt', 'vatTotal', 'totalTtc', 'lines', 'notes',
+            'convertedOrderId', 'updatedAt'
+          ]);
+        allow delete: if isVerifiedUser() && isValidId(orgId) && isValidId(quoteId) && isOrgAdmin(orgId);
+      }
+
+      match /salesOrders/{orderId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(orderId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(orderId)
+          && isOrgOperator(orgId)
+          && isValidSalesOrder(incoming(), orgId)
+          && incoming().id == orderId
+          && incoming().createdByUid == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(orderId)
+          && isOrgOperator(orgId)
+          && isValidSalesOrder(incoming(), orgId)
+          && incoming().id == existing().id
+          && incoming().orgId == existing().orgId
+          && incoming().createdByUid == existing().createdByUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && existing().status != 'closed'
+          && existing().status != 'canceled'
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'status', 'stockReserved', 'expectedDeliveryDate', 'paymentTerms',
+            'shippingCost', 'subtotalHt', 'vatTotal', 'totalTtc',
+            'lines', 'notes', 'updatedAt'
+          ]);
+        allow delete: if false;
+      }
+
+      match /deliveryNotes/{deliveryId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(deliveryId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(deliveryId)
+          && isOrgOperator(orgId)
+          && isValidDeliveryNote(incoming(), orgId)
+          && incoming().id == deliveryId
+          && incoming().createdAt == request.time;
+        allow update, delete: if false;
+      }
+
+      match /invoiceCounters/{counterId} {
+        allow get: if isValidId(orgId) && isValidId(counterId) && isOrgMember(orgId);
+        allow list: if false;
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(counterId)
+          && isOrgOperator(orgId)
+          && incoming().keys().hasAll(['id', 'orgId', 'year', 'invoiceType', 'sequenceNumber', 'createdByUid', 'createdAt', 'updatedAt'])
+          && incoming().keys().hasOnly(['id', 'orgId', 'year', 'invoiceType', 'sequenceNumber', 'createdByUid', 'createdAt', 'updatedAt'])
+          && incoming().id == counterId
+          && incoming().orgId == orgId
+          && incoming().year is number && incoming().year >= 2000 && incoming().year <= 2100
+          && incoming().invoiceType in ['invoice', 'deposit', 'credit_note']
+          && incoming().sequenceNumber == 1
+          && incoming().createdByUid == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(counterId)
+          && isOrgOperator(orgId)
+          && incoming().id == existing().id
+          && incoming().orgId == existing().orgId
+          && incoming().year == existing().year
+          && incoming().invoiceType == existing().invoiceType
+          && incoming().createdByUid == existing().createdByUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().sequenceNumber == existing().sequenceNumber + 1
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['sequenceNumber', 'updatedAt']);
+        allow delete: if false;
+      }
+
+      match /salesInvoices/{invoiceId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(invoiceId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(invoiceId)
+          && isOrgOperator(orgId)
+          && isValidSalesInvoice(incoming(), orgId)
+          && incoming().id == invoiceId
+          && incoming().createdByUid == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(invoiceId)
+          && isOrgOperator(orgId)
+          && isValidSalesInvoice(incoming(), orgId)
+          && incoming().id == existing().id
+          && incoming().orgId == existing().orgId
+          && incoming().invoiceNumber == existing().invoiceNumber
+          && incoming().sequenceNumber == existing().sequenceNumber
+          && incoming().createdByUid == existing().createdByUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && existing().status != 'paid'
+          && incoming().diff(existing()).affectedKeys().hasOnly(['paidAmount', 'status', 'notes', 'updatedAt']);
+        allow delete: if false;
+      }
+
+      match /payments/{paymentId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(paymentId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(paymentId)
+          && isOrgOperator(orgId)
+          && isValidPayment(incoming(), orgId)
+          && incoming().id == paymentId
+          && incoming().createdAt == request.time;
+        allow update, delete: if false;
+      }
+    }
+  }
+}
+)
+          && request.resource.data.accentColor.matches('^#[0-9A-Fa-f]{6}
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(productId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(productId)
+          && isOrgManager(orgId)
+          && isValidProduct(incoming(), orgId)
+          && incoming().id == productId
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(productId)
+          && isOrgManager(orgId)
+          && isValidProduct(incoming(), orgId)
+          && incoming().id == existing().id
+          && incoming().orgId == existing().orgId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'sku', 'barcode', 'name', 'description', 'categoryId', 'categoryName',
+            'brand', 'unit', 'purchasePrice', 'salePrice', 'vatRate',
+            'minStock', 'maxStock', 'status', 'trackBatches', 'trackSerials',
+            'trackExpiry', 'updatedAt'
+          ]);
+        allow delete: if isVerifiedUser() && isValidId(orgId) && isValidId(productId) && isOrgAdmin(orgId);
+      }
+
+      match /warehouses/{warehouseId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(warehouseId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(warehouseId)
+          && isOrgManager(orgId)
+          && isValidWarehouse(incoming(), orgId)
+          && incoming().id == warehouseId
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(warehouseId)
+          && isOrgManager(orgId)
+          && isValidWarehouse(incoming(), orgId)
+          && incoming().id == existing().id
+          && incoming().orgId == existing().orgId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'code', 'name', 'address', 'city', 'country', 'capacityUnits', 'isDefault', 'status', 'updatedAt'
+          ]);
+        allow delete: if isVerifiedUser() && isValidId(orgId) && isValidId(warehouseId) && isOrgAdmin(orgId);
+      }
+
+      match /locations/{locationId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(locationId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(locationId)
+          && isOrgManager(orgId)
+          && isValidLocation(incoming(), orgId)
+          && incoming().id == locationId
+          && incoming().createdAt == request.time;
+        allow update: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(locationId)
+          && isOrgManager(orgId)
+          && isValidLocation(incoming(), orgId)
+          && incoming().id == existing().id
+          && incoming().orgId == existing().orgId
+          && incoming().warehouseId == existing().warehouseId
+          && incoming().createdAt == existing().createdAt
+          && incoming().diff(existing()).affectedKeys().hasOnly(['code', 'zoneType', 'aisle', 'rack', 'level', 'capacity', 'status']);
+        allow delete: if isVerifiedUser() && isValidId(orgId) && isValidId(locationId) && isOrgAdmin(orgId);
+      }
+
+      match /stockBalances/{balanceId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(balanceId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(balanceId)
+          && isOrgOperator(orgId)
+          && isValidStockBalance(incoming(), orgId)
+          && incoming().id == balanceId
+          && incoming().updatedAt == request.time
+          && (incoming().physicalQty == 0 && !('lastMovementId' in incoming())
+            || isLinkedStockBalanceMovement(orgId, incoming(), incoming().physicalQty));
+        allow update: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(balanceId)
+          && isOrgOperator(orgId)
+          && isValidStockBalance(incoming(), orgId)
+          && incoming().id == existing().id
+          && incoming().orgId == existing().orgId
+          && incoming().productId == existing().productId
+          && incoming().warehouseId == existing().warehouseId
+          && incoming().locationId == existing().locationId
+          && incoming().updatedAt == request.time
+          && (incoming().physicalQty == existing().physicalQty && incoming().unitCost == existing().unitCost
+              && ((!('lastMovementId' in existing()) && !('lastMovementId' in incoming()))
+                || (('lastMovementId' in existing()) && incoming().lastMovementId == existing().lastMovementId))
+            || (incoming().lastMovementId is string
+              && (!('lastMovementId' in existing()) || incoming().lastMovementId != existing().lastMovementId)
+              && isLinkedStockBalanceMovement(orgId, incoming(), incoming().physicalQty - existing().physicalQty)))
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'productSku', 'productName', 'warehouseName', 'locationCode',
+            'physicalQty', 'reservedQty', 'onOrderQty', 'inTransitQty', 'availableQty', 'unitCost', 'lastMovementId', 'updatedAt'
+          ]);
+        allow delete: if false;
+      }
+
+      match /stockMovements/{movementId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(movementId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(movementId)
+          && isOrgOperator(orgId)
+          && isValidStockMovement(incoming(), orgId)
+          && incoming().id == movementId
+          && incoming().createdAt == request.time
+          && isMovementLinkedToBalances(orgId, incoming());
+        allow update, delete: if false;
+      }
+
+      match /auditLogs/{logId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(logId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(logId)
+          && isOrgMember(orgId)
+          && isValidAuditLog(incoming(), orgId)
+          && incoming().id == logId
+          && incoming().createdAt == request.time;
+        allow update, delete: if false;
+      }
+
+      match /notifications/{notificationId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(notificationId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(notificationId)
+          && isOrgOperator(orgId)
+          && isValidNotification(incoming(), orgId)
+          && incoming().id == notificationId
+          && incoming().createdAt == request.time;
+        allow update: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(notificationId)
+          && isOrgMember(orgId)
+          && isValidNotification(incoming(), orgId)
+          && incoming().id == existing().id
+          && incoming().orgId == existing().orgId
+          && incoming().createdAt == existing().createdAt
+          && incoming().diff(existing()).affectedKeys().hasOnly(['isRead']);
+        allow delete: if isVerifiedUser() && isValidId(orgId) && isValidId(notificationId) && isOrgAdmin(orgId);
+      }
+
+      match /suppliers/{supplierId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(supplierId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(supplierId)
+          && isOrgManager(orgId)
+          && isValidSupplier(incoming(), orgId)
+          && incoming().id == supplierId
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(supplierId)
+          && isOrgManager(orgId)
+          && isValidSupplier(incoming(), orgId)
+          && incoming().id == existing().id
+          && incoming().orgId == existing().orgId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'code', 'name', 'contactName', 'email', 'phone', 'address', 'city',
+            'country', 'siret', 'vatNumber', 'paymentTerms', 'leadTimeDays',
+            'rating', 'onTimeRate', 'status', 'notes', 'updatedAt'
+          ]);
+        allow delete: if isVerifiedUser() && isValidId(orgId) && isValidId(supplierId) && isOrgAdmin(orgId);
+      }
+
+      match /purchaseRequests/{requestId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(requestId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(requestId)
+          && isOrgOperator(orgId)
+          && isValidPurchaseRequest(incoming(), orgId)
+          && incoming().id == requestId
+          && incoming().requestedByUid == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(requestId)
+          && isOrgManager(orgId)
+          && isValidPurchaseRequest(incoming(), orgId)
+          && incoming().id == existing().id
+          && incoming().orgId == existing().orgId
+          && incoming().requestedByUid == existing().requestedByUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'title', 'priority', 'status', 'lines', 'rfqOffers', 'notes', 'convertedOrderId', 'updatedAt'
+          ]);
+        allow delete: if isVerifiedUser() && isValidId(orgId) && isValidId(requestId) && isOrgAdmin(orgId);
+      }
+
+      match /purchaseOrders/{orderId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(orderId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(orderId)
+          && isOrgManager(orgId)
+          && isValidPurchaseOrder(incoming(), orgId)
+          && incoming().id == orderId
+          && incoming().createdByUid == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(orderId)
+          && isOrgOperator(orgId)
+          && isValidPurchaseOrder(incoming(), orgId)
+          && incoming().id == existing().id
+          && incoming().orgId == existing().orgId
+          && incoming().createdByUid == existing().createdByUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && existing().status != 'closed'
+          && existing().status != 'canceled'
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'status', 'expectedDate', 'paymentTerms', 'shippingCost',
+            'subtotalHt', 'vatTotal', 'totalTtc', 'lines', 'notes', 'updatedAt'
+          ]);
+        allow delete: if false;
+      }
+
+      match /goodsReceipts/{receiptId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(receiptId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(receiptId)
+          && isOrgOperator(orgId)
+          && isValidGoodsReceipt(incoming(), orgId)
+          && incoming().id == receiptId
+          && incoming().createdAt == request.time;
+        allow update, delete: if false;
+      }
+
+      match /supplierInvoices/{invoiceId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(invoiceId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(invoiceId)
+          && isOrgManager(orgId)
+          && isValidSupplierInvoice(incoming(), orgId)
+          && incoming().id == invoiceId
+          && incoming().createdByUid == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(invoiceId)
+          && isOrgManager(orgId)
+          && isValidSupplierInvoice(incoming(), orgId)
+          && incoming().id == existing().id
+          && incoming().orgId == existing().orgId
+          && incoming().createdByUid == existing().createdByUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && existing().status != 'paid'
+          && incoming().diff(existing()).affectedKeys().hasOnly(['paidAmount', 'status', 'notes', 'updatedAt']);
+        allow delete: if false;
+      }
+
+      match /customers/{customerId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(customerId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(customerId)
+          && isOrgOperator(orgId)
+          && isValidCustomer(incoming(), orgId)
+          && incoming().id == customerId
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(customerId)
+          && isOrgOperator(orgId)
+          && isValidCustomer(incoming(), orgId)
+          && incoming().id == existing().id
+          && incoming().orgId == existing().orgId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'code', 'type', 'name', 'contactName', 'email', 'phone',
+            'billingAddress', 'shippingAddress', 'city', 'country',
+            'siret', 'vatNumber', 'paymentTerms', 'creditLimit',
+            'status', 'notes', 'updatedAt'
+          ]);
+        allow delete: if isVerifiedUser() && isValidId(orgId) && isValidId(customerId) && isOrgAdmin(orgId);
+      }
+
+      match /quotes/{quoteId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(quoteId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(quoteId)
+          && isOrgOperator(orgId)
+          && isValidQuote(incoming(), orgId)
+          && incoming().id == quoteId
+          && incoming().createdByUid == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(quoteId)
+          && isOrgOperator(orgId)
+          && isValidQuote(incoming(), orgId)
+          && incoming().id == existing().id
+          && incoming().orgId == existing().orgId
+          && incoming().createdByUid == existing().createdByUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && existing().status != 'converted'
+          && existing().status != 'rejected'
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'status', 'validUntil', 'paymentTerms', 'shippingCost',
+            'subtotalHt', 'vatTotal', 'totalTtc', 'lines', 'notes',
+            'convertedOrderId', 'updatedAt'
+          ]);
+        allow delete: if isVerifiedUser() && isValidId(orgId) && isValidId(quoteId) && isOrgAdmin(orgId);
+      }
+
+      match /salesOrders/{orderId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(orderId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(orderId)
+          && isOrgOperator(orgId)
+          && isValidSalesOrder(incoming(), orgId)
+          && incoming().id == orderId
+          && incoming().createdByUid == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(orderId)
+          && isOrgOperator(orgId)
+          && isValidSalesOrder(incoming(), orgId)
+          && incoming().id == existing().id
+          && incoming().orgId == existing().orgId
+          && incoming().createdByUid == existing().createdByUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && existing().status != 'closed'
+          && existing().status != 'canceled'
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'status', 'stockReserved', 'expectedDeliveryDate', 'paymentTerms',
+            'shippingCost', 'subtotalHt', 'vatTotal', 'totalTtc',
+            'lines', 'notes', 'updatedAt'
+          ]);
+        allow delete: if false;
+      }
+
+      match /deliveryNotes/{deliveryId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(deliveryId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(deliveryId)
+          && isOrgOperator(orgId)
+          && isValidDeliveryNote(incoming(), orgId)
+          && incoming().id == deliveryId
+          && incoming().createdAt == request.time;
+        allow update, delete: if false;
+      }
+
+      match /invoiceCounters/{counterId} {
+        allow get: if isValidId(orgId) && isValidId(counterId) && isOrgMember(orgId);
+        allow list: if false;
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(counterId)
+          && isOrgOperator(orgId)
+          && incoming().keys().hasAll(['id', 'orgId', 'year', 'invoiceType', 'sequenceNumber', 'createdByUid', 'createdAt', 'updatedAt'])
+          && incoming().keys().hasOnly(['id', 'orgId', 'year', 'invoiceType', 'sequenceNumber', 'createdByUid', 'createdAt', 'updatedAt'])
+          && incoming().id == counterId
+          && incoming().orgId == orgId
+          && incoming().year is number && incoming().year >= 2000 && incoming().year <= 2100
+          && incoming().invoiceType in ['invoice', 'deposit', 'credit_note']
+          && incoming().sequenceNumber == 1
+          && incoming().createdByUid == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(counterId)
+          && isOrgOperator(orgId)
+          && incoming().id == existing().id
+          && incoming().orgId == existing().orgId
+          && incoming().year == existing().year
+          && incoming().invoiceType == existing().invoiceType
+          && incoming().createdByUid == existing().createdByUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().sequenceNumber == existing().sequenceNumber + 1
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['sequenceNumber', 'updatedAt']);
+        allow delete: if false;
+      }
+
+      match /salesInvoices/{invoiceId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(invoiceId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(invoiceId)
+          && isOrgOperator(orgId)
+          && isValidSalesInvoice(incoming(), orgId)
+          && incoming().id == invoiceId
+          && incoming().createdByUid == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(invoiceId)
+          && isOrgOperator(orgId)
+          && isValidSalesInvoice(incoming(), orgId)
+          && incoming().id == existing().id
+          && incoming().orgId == existing().orgId
+          && incoming().invoiceNumber == existing().invoiceNumber
+          && incoming().sequenceNumber == existing().sequenceNumber
+          && incoming().createdByUid == existing().createdByUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && existing().status != 'paid'
+          && incoming().diff(existing()).affectedKeys().hasOnly(['paidAmount', 'status', 'notes', 'updatedAt']);
+        allow delete: if false;
+      }
+
+      match /payments/{paymentId} {
+        allow get: if isSignedIn() && isValidId(orgId) && isValidId(paymentId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isVerifiedUser()
+          && isValidId(orgId)
+          && isValidId(paymentId)
+          && isOrgOperator(orgId)
+          && isValidPayment(incoming(), orgId)
+          && incoming().id == paymentId
+          && incoming().createdAt == request.time;
+        allow update, delete: if false;
+      }
+    }
+  }
+}
+)
+          && request.resource.data.supportEmail is string
+          && request.resource.data.supportEmail.size() <= 254
+          && request.resource.data.footerText is string
+          && request.resource.data.footerText.size() <= 180
+          && request.resource.data.showStockFlow is bool
+          && request.resource.data.updatedBy == request.auth.uid;
+        allow delete: if isVerifiedUser() && isValidId(orgId) && settingId == 'branding' && isOrgAdmin(orgId);
+      }
+
       match /products/{productId} {
         allow get: if isSignedIn() && isValidId(orgId) && isValidId(productId) && isOrgMember(orgId);
         allow list: if isValidId(orgId) && isOrgMember(orgId);
