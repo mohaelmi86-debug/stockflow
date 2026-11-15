@@ -32,7 +32,7 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
       console.error('Impossible de charger la marque de l’organisation:', error);
       if (requestId === requestSequence.current) setBranding({ orgId, ...DEFAULT_BRANDING });
     } finally {
-      setLoadingBranding(false);
+      if (requestId === requestSequence.current) setLoadingBranding(false);
     }
   }, [activeOrg?.id]);
 
